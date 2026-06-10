@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  # ── TCC Dashboards ───────────────────────────────────────────────────────────
+  # Grafana lê todos os JSONs desta pasta automaticamente ao iniciar.
+  # Adicione novos dashboards copiando o JSON para este diretório.
+  - name: tcc-dashboards
+    orgId: 1
+    type: file
+    disableDeletion: false   # permite edição via UI para exploração
+    updateIntervalSeconds: 30
+    allowUiUpdates: true     # facilita iteração durante a pesquisa
+    options:
+      path: /etc/grafana/provisioning/dashboards

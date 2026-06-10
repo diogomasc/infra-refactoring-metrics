@@ -1,0 +1,167 @@
+# --- Stack de observabilidade do TCC ---
+# Componentes: SonarQube, PostgreSQL, Prometheus, Grafana e K6
+#
+# Execute a partir da raiz do projeto:
+#   docker compose -f infra/docker-compose.infra.yml up -d
+#
+# Para derrubar:
+#   docker compose -f infra/docker-compose.infra.yml down
+#
+# Para rodar os testes de carga (K6):
+#   docker compose -f infra/docker-compose.infra.yml \
+#     --profile testing run --rm k6 run /scripts/load-test.js
+
+services:
+
+  # ── Banco do SonarQube ──────────────────────────────────────────────────────
+  # O SonarQube usa PostgreSQL para persistir análises e metadados.
+  postgres:
+    image: postgres:15-alpine
+    container_name: tcc-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sonarqube
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - tcc-infra
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonarqube"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ── SonarQube ───────────────────────────────────────────────────────────────
+  # Análise estática: CC, CBO, LCOM, TDR, code smells (God Class, etc.)
+  # Requer vm.max_map_count ≥ 524288 no host (ver README).
+  sonarqube:
+    image: sonarqube:community
+    container_name: tcc-sonarqube
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/sonarqube
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+      SONAR_CE_JAVAOPTS: "-Xmx512m -Xms128m"
+      SONAR_WEB_JAVAOPTS: "-Xmx512m -Xms128m"
+      # Xms = Xmx obrigatório a partir do Elasticsearch 8.x (SonarQube ≥ 26.x)
+      SONAR_SEARCH_JAVAOPTS: "-Xmx1g -Xms1g"
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_logs:/opt/sonarqube/logs
+      - sonarqube_extensions:/opt/sonarqube/extensions
+    networks:
+      - tcc-infra
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 2G
+
+  # ── Prometheus ──────────────────────────────────────────────────────────────
+  # Coleta métricas Micrometer do Spring Boot via /actuator/prometheus.
+  # host.docker.internal aponta para a aplicação rodando no host (porta 8080).
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tcc-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - tcc-infra
+    extra_hosts:
+      # Permite que o Prometheus alcance o Spring Boot rodando no host
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ── Grafana ─────────────────────────────────────────────────────────────────
+  # Dashboards de runtime: latência p50/p95/p99, throughput, taxa de erro.
+  # Datasource Prometheus pré-provisionado automaticamente.
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tcc-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - tcc-infra
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 64M
+
+  # ── K6 (testes de carga — sob demanda) ─────────────────────────────────────
+  # Só sobe quando o profile testing é habilitado (não inicia com up -d).
+  # Execute: docker compose -f infra/docker-compose.infra.yml \
+  #            --profile testing run --rm k6 run /scripts/load-test.js
+  k6:
+    image: grafana/k6:latest
+    container_name: tcc-k6
+    profiles: ["testing"]
+    volumes:
+      - ./k6:/scripts:ro
+    networks:
+      - tcc-infra
+    extra_hosts:
+      # Permite que o K6 acesse o Spring Boot rodando no host
+      - "host.docker.internal:host-gateway"
+
+# ── Volumes persistentes ────────────────────────────────────────────────────
+# Mantêm dados entre reinícios do stack.
+volumes:
+  postgres_data:
+  sonarqube_data:
+  sonarqube_logs:
+  sonarqube_extensions:
+  prometheus_data:
+  grafana_data:
+
+# ── Rede isolada ────────────────────────────────────────────────────────────
+# Evita colisão com outras redes Docker no host.
+networks:
+  tcc-infra:
+    driver: bridge

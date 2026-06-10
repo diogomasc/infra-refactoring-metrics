@@ -1,0 +1,35 @@
+# --- Configuração do Prometheus ---
+# Coleta métricas do protótipo Spring Boot via Micrometer.
+#
+# Pré-requisitos no application.properties:
+#   management.endpoints.web.exposure.include=health,prometheus,metrics
+#   management.endpoint.prometheus.enabled=true
+#
+# host.docker.internal aponta para o host onde o Spring Boot roda (porta 8080).
+# No Linux, o extra_hosts: host.docker.internal:host-gateway no compose garante
+# que este hostname resolve corretamente.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  # ── Spring PetClinic REST ────────────────────────────────────────────────────
+  # Porta 9966, context-path /petclinic/
+  - job_name: "spring-petclinic-rest"
+    metrics_path: "/petclinic/actuator/prometheus"
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["host.docker.internal:9966"]
+        labels:
+          app: "spring-petclinic-rest"
+          fase: "baseline"
+          # ↑ Alterar para "pos-refatoracao" ao iniciar a Fase 3 (comparação)
+
+  # ── Auto-monitoramento do Prometheus ──────────────────────────────────────
+  # Mantém o próprio Prometheus visível no Grafana.
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+

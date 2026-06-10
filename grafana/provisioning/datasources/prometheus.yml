@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  # ── Prometheus ──────────────────────────────────────────────────────────────
+  # Datasource pré-provisionado — não é necessário configurar manualmente no Grafana.
+  # O Grafana acessa o Prometheus pela rede interna Docker (tcc-infra).
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://tcc-prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "5s"
