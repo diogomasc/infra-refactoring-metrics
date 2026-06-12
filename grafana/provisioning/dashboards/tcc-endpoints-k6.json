@@ -244,8 +244,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(metodo_execucao_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, spring_observation_contextual_name)) * 1000",
-          "legendFormat": "{{ spring_observation_contextual_name }}",
+          "expr": "histogram_quantile(0.95, sum(rate(metodo_execucao_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, class, method)) * 1000",
+          "legendFormat": "{{ class }}.{{ method }}",
           "refId": "A"
         }
       ]
@@ -273,8 +273,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (spring_observation_contextual_name) (rate(metodo_execucao_seconds_count{error!=\"none\", job=\"spring-petclinic-rest\"}[2m])) / sum by (spring_observation_contextual_name) (rate(metodo_execucao_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
-          "legendFormat": "{{ spring_observation_contextual_name }}",
+          "expr": "sum by (class, method) (rate(metodo_execucao_seconds_count{error!=\"none\", job=\"spring-petclinic-rest\"}[2m])) / sum by (class, method) (rate(metodo_execucao_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
+          "legendFormat": "{{ class }}.{{ method }}",
           "refId": "A"
         }
       ]
@@ -291,8 +291,8 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (spring_observation_contextual_name) (rate(metodo_execucao_seconds_count{job=\"spring-petclinic-rest\"}[1m]))",
-          "legendFormat": "{{ spring_observation_contextual_name }}",
+          "expr": "sum by (class, method) (rate(metodo_execucao_seconds_count{job=\"spring-petclinic-rest\"}[1m]))",
+          "legendFormat": "{{ class }}.{{ method }}",
           "refId": "A"
         }
       ]
