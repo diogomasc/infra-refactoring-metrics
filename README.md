@@ -135,7 +135,7 @@ O script `k6/load-test.js` exercita os endpoints principais do PetClinic seguind
 | `/petclinic/api/owners` | POST | `latencia_criar_owner` |
 | `/petclinic/api/owners/{id}` | GET | `latencia_consultar_owner` |
 | `/petclinic/api/owners/{id}/pets` | POST | `latencia_criar_pet` |
-| `/petclinic/api/visits` | POST | `latencia_criar_visit` |
+| `/petclinic/api/owners/{ownerId}/pets/{petId}/visits` | POST | `latencia_criar_visit` |
 | `/petclinic/api/vets` | GET | `latencia_listar_vets` |
 | `/petclinic/actuator/health` | GET | `latencia_health` |
 
@@ -143,11 +143,11 @@ O script `k6/load-test.js` exercita os endpoints principais do PetClinic seguind
 
 | Fase | Duração | VUs |
 |---|---|---|
-| Ramp-up | 30s | 0 → 10 |
-| Sustentada | 2min | 10 |
-| Spike | 30s | 10 → 50 |
-| Estresse | 1min | 50 |
-| Ramp-down | 30s | 50 → 0 |
+| Ramp-up | 30s | 0 → 30 |
+| Sustentada | 1min | 30 → 50 |
+| Spike | 30s | 50 → 100 |
+| Estresse | 1min | 100 |
+| Ramp-down | 30s | 100 → 0 |
 
 ---
 
