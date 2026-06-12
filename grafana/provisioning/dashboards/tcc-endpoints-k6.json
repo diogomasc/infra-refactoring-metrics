@@ -1,14 +1,41 @@
 {
   "__inputs": [],
   "__requires": [
-    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
-    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
-    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
-    { "type": "panel", "id": "stat",       "name": "Stat",        "version": "" },
-    { "type": "panel", "id": "gauge",      "name": "Gauge",       "version": "" }
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "gauge",
+      "name": "Gauge",
+      "version": ""
+    }
   ],
-  "annotations": { "list": [] },
-  "description": "Latência (p50/p95/p99), throughput, taxa de erro e @Observed por bean — TCC baseline.",
+  "annotations": {
+    "list": []
+  },
+  "description": "Lat\u00eancia (p50/p95/p99), throughput, taxa de erro e @Observed por bean \u2014 TCC baseline.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -16,362 +43,762 @@
   "links": [],
   "liveNow": false,
   "panels": [
-
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 100,
-      "title": "🔴 Visão Geral — Erros e Throughput",
+      "title": "\ud83d\udd34 Vis\u00e3o Geral \u2014 Erros e Throughput",
       "type": "row"
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Requisições com status >= 400 / total. Captura 4xx (validação) e 5xx (erros internos).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Requisi\u00e7\u00f5es com status >= 400 / total. Captura 4xx (valida\u00e7\u00e3o) e 5xx (erros internos).",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green", "value": null },
-            { "color": "yellow", "value": 1 },
-            { "color": "red",    "value": 10 }
-          ]},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
           "unit": "percent",
-          "mappings": [{ "type": "special", "options": { "match": "nan", "result": { "text": "0%" } } }]
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "0%"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
       "id": 1,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background", "graphMode": "area" },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area"
+      },
       "title": "Taxa de Erro HTTP (4xx + 5xx) %",
       "type": "stat",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "100 * sum(rate(http_server_requests_seconds_count{job=\"spring-boot-prototipo\", outcome=~\"CLIENT_ERROR|SERVER_ERROR\"}[2m])) / sum(rate(http_server_requests_seconds_count{job=\"spring-boot-prototipo\"}[2m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "100 * sum(rate(http_server_requests_seconds_count{job=\"spring-petclinic-rest\", outcome=~\"CLIENT_ERROR|SERVER_ERROR\"}[2m])) / sum(rate(http_server_requests_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
           "legendFormat": "taxa_erro",
           "refId": "A"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "description": "p95 global calculado via histograma (requer management.metrics.distribution.percentiles-histogram.http.server.requests=true).",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [
-            { "color": "green",  "value": null },
-            { "color": "yellow", "value": 500 },
-            { "color": "red",    "value": 2000 }
-          ]},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500
+              },
+              {
+                "color": "red",
+                "value": 2000
+              }
+            ]
+          },
           "unit": "ms",
-          "mappings": [{ "type": "special", "options": { "match": "nan", "result": { "text": "N/A" } } }]
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "N/A"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
       "id": 3,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto", "textMode": "auto", "colorMode": "background", "graphMode": "none" },
-      "title": "Latência p95 Global (ms)",
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "title": "Lat\u00eancia p95 Global (ms)",
       "type": "stat",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\"}[2m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\"}[2m])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "A"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Throughput por URI — inclui todos os outcomes (SUCCESS, CLIENT_ERROR, SERVER_ERROR).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Throughput por URI \u2014 inclui todos os outcomes (SUCCESS, CLIENT_ERROR, SERVER_ERROR).",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
       "id": 2,
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "title": "Throughput por Endpoint (req/s)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (uri, method) (rate(http_server_requests_seconds_count{job=\"spring-boot-prototipo\", uri=~\"/orders.*\"}[1m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (uri, method) (rate(http_server_requests_seconds_count{job=\"spring-petclinic-rest\", uri=~\"/api/.*\"}[1m]))",
           "legendFormat": "{{ method }} {{ uri }}",
           "refId": "A"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "description": "Detalhamento da taxa de erro por endpoint e status HTTP.",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "reqps", "custom": { "lineWidth": 2, "fillOpacity": 15 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 5 },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
       "id": 10,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "title": "Erros por Endpoint e Status (req/s)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{job=\"spring-boot-prototipo\", outcome=~\"CLIENT_ERROR|SERVER_ERROR\"}[1m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (uri, status) (rate(http_server_requests_seconds_count{job=\"spring-petclinic-rest\", outcome=~\"CLIENT_ERROR|SERVER_ERROR\"}[1m]))",
           "legendFormat": "{{ uri }} [{{ status }}]",
           "refId": "A"
         }
       ]
     },
-
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
       "id": 101,
-      "title": "⏱ Latência por Endpoint (p50 / p95 / p99)",
+      "title": "\u23f1 Lat\u00eancia por Endpoint (p50 / p95 / p99)",
       "type": "row"
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "God Class smell: processOrder() concentra validação + desconto + persistência. Latência alta = custo do Long Method.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "God Class smell: processOrder() concentra valida\u00e7\u00e3o + desconto + persist\u00eancia. Lat\u00eancia alta = custo do Long Method.",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 10 },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
       "id": 4,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
-      "title": "Latência p50 / p95 / p99 — POST /orders (God Class + Long Method)",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "title": "Lat\u00eancia p50 / p95 / p99 \u2014 POST /owners (Write-path)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders\", method=\"POST\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners\", method=\"POST\"}[1m])) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders\", method=\"POST\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners\", method=\"POST\"}[1m])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders\", method=\"POST\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners\", method=\"POST\"}[1m])) by (le)) * 1000",
           "legendFormat": "p99",
           "refId": "C"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "description": "Shotgun Surgery + N+1: generateDetailedReport() busca Customer para cada Order individualmente.",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 10 },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
       "id": 5,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
-      "title": "Latência p50 / p95 / p99 — GET /orders/report (Shotgun Surgery + N+1)",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "title": "Lat\u00eancia p50 / p95 / p99 \u2014 GET /vets (ManyToMany)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/report\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/vets\"}[1m])) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/report\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/vets\"}[1m])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/report\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/vets\"}[1m])) by (le)) * 1000",
           "legendFormat": "p99",
           "refId": "C"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "N+1 query implícita ao buscar Order + Customer relacionado.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "N+1 query impl\u00edcita ao buscar Order + Customer relacionado.",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 19 },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
       "id": 6,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
-      "title": "Latência p50 / p95 / p99 — GET /orders/{id}",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "title": "Lat\u00eancia p50 / p95 / p99 \u2014 GET /owners/{ownerId}",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/{id}\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}\"}[1m])) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/{id}\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}\"}[1m])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/orders/{id}\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}\"}[1m])) by (le)) * 1000",
           "legendFormat": "p99",
           "refId": "C"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Referência: health check deve ter latência < 10ms consistentemente.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Refer\u00eancia: health check deve ter lat\u00eancia < 10ms consistentemente.",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 19 },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
       "id": 7,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
-      "title": "Latência p50 / p95 / p99 — GET /actuator/health (referência)",
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "title": "Lat\u00eancia p50 / p95 / p99 \u2014 GET /actuator/health (refer\u00eancia)",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
           "legendFormat": "p50",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
           "legendFormat": "p95",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-boot-prototipo\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/actuator/health\"}[1m])) by (le)) * 1000",
           "legendFormat": "p99",
           "refId": "C"
         }
       ]
     },
-
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
       "id": 102,
-      "title": "🔬 Observation API — Tempo de Execução por Bean (@Observed)",
+      "title": "\ud83d\udd2c Observation API \u2014 Tempo de Execu\u00e7\u00e3o por Bean (@Observed)",
       "type": "row"
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "description": "Compara p95 de execução por bean. order.service captura o custo de processOrder (Long Method). report.service evidencia N+1 do generateDetailedReport. notification.service mostra overhead de responsabilidade espalhada (Feature Envy).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Compara p95 de execu\u00e7\u00e3o por bean. order.service captura o custo de processOrder (Long Method). report.service evidencia N+1 do generateDetailedReport. notification.service mostra overhead de responsabilidade espalhada (Feature Envy).",
       "fieldConfig": {
-        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ms", "custom": { "lineWidth": 2, "fillOpacity": 10 } },
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        },
         "overrides": []
       },
-      "gridPos": { "h": 10, "w": 16, "x": 0, "y": 29 },
+      "gridPos": {
+        "h": 10,
+        "w": 16,
+        "x": 0,
+        "y": 29
+      },
       "id": 8,
       "options": {
-        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max", "lastNotNull"] },
-        "tooltip": { "mode": "multi" }
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
       },
-      "title": "p95 por Bean @Observed (ms) — cross-bean comparison",
+      "title": "p95 por Bean @Observed (ms) \u2014 cross-bean comparison",
       "type": "timeseries",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(order_service_seconds_bucket{job=\"spring-boot-prototipo\"}[1m])) by (le, method)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(order_service_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, method)) * 1000",
           "legendFormat": "order.service.{{ method }}",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(notification_service_seconds_bucket{job=\"spring-boot-prototipo\"}[1m])) by (le, method)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(notification_service_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, method)) * 1000",
           "legendFormat": "notification.service.{{ method }}",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(report_service_seconds_bucket{job=\"spring-boot-prototipo\"}[1m])) by (le, method)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(report_service_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, method)) * 1000",
           "legendFormat": "report.service.{{ method }}",
           "refId": "C"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "histogram_quantile(0.95, sum(rate(order_controller_seconds_bucket{job=\"spring-boot-prototipo\"}[1m])) by (le, method)) * 1000",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum(rate(order_controller_seconds_bucket{job=\"spring-petclinic-rest\"}[1m])) by (le, method)) * 1000",
           "legendFormat": "order.controller.{{ method }}",
           "refId": "D"
         }
       ]
     },
-
     {
-      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
       "description": "Taxa de erros por bean @Observed. error != 'none' indica RuntimeException capturada pelo AOP.",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.01 }] },
-          "unit": "percentunit", "min": 0, "max": 1,
-          "mappings": [{ "type": "special", "options": { "match": "nan", "result": { "text": "0%" } } }]
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "0%"
+                }
+              }
+            }
+          ]
         },
         "overrides": []
       },
-      "gridPos": { "h": 10, "w": 8, "x": 16, "y": 29 },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 29
+      },
       "id": 9,
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "orientation": "auto", "showThresholdLabels": false, "showThresholdMarkers": true
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
       },
       "title": "Taxa de Erro por Bean @Observed",
       "type": "gauge",
       "targets": [
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(order_service_seconds_count{error!=\"none\", job=\"spring-boot-prototipo\"}[2m])) / sum(rate(order_service_seconds_count{job=\"spring-boot-prototipo\"}[2m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(order_service_seconds_count{error!=\"none\", job=\"spring-petclinic-rest\"}[2m])) / sum(rate(order_service_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
           "legendFormat": "order.service",
           "refId": "A"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(notification_service_seconds_count{error!=\"none\", job=\"spring-boot-prototipo\"}[2m])) / sum(rate(notification_service_seconds_count{job=\"spring-boot-prototipo\"}[2m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(notification_service_seconds_count{error!=\"none\", job=\"spring-petclinic-rest\"}[2m])) / sum(rate(notification_service_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
           "legendFormat": "notification.service",
           "refId": "B"
         },
         {
-          "datasource": { "type": "prometheus", "uid": "${datasource}" },
-          "expr": "sum(rate(report_service_seconds_count{error!=\"none\", job=\"spring-boot-prototipo\"}[2m])) / sum(rate(report_service_seconds_count{job=\"spring-boot-prototipo\"}[2m]))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(report_service_seconds_count{error!=\"none\", job=\"spring-petclinic-rest\"}[2m])) / sum(rate(report_service_seconds_count{job=\"spring-petclinic-rest\"}[2m]))",
           "legendFormat": "report.service",
           "refId": "C"
         }
       ]
     }
   ],
-
   "refresh": "10s",
   "schemaVersion": 38,
-  "tags": ["tcc", "spring-boot", "k6", "baseline"],
+  "tags": [
+    "tcc",
+    "spring-boot",
+    "k6",
+    "baseline"
+  ],
   "templating": {
     "list": [
       {
@@ -388,10 +815,13 @@
       }
     ]
   },
-  "time": { "from": "now-30m", "to": "now" },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
-  "title": "TCC — Endpoints & Carga (K6)",
+  "title": "TCC \u2014 Endpoints & Carga (K6)",
   "uid": "tcc-endpoints-k6",
   "version": 2
 }
