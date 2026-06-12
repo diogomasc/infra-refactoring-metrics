@@ -4,113 +4,169 @@
 
 O K6 é uma ferramenta de teste de carga baseada em scripts JavaScript (ES6+) desenvolvida pela Grafana Labs. Neste projeto, o K6 é responsável pela coleta de **métricas dinâmicas de carga**, complementando a observabilidade passiva do Prometheus/Micrometer.
 
-A distinção fundamental entre as duas abordagens é:
-- **Micrometer (servidor):** mede o tempo de processamento *interno* — da chegada da requisição ao retorno da resposta pelo framework
-- **K6 (cliente):** mede o tempo de resposta *ponta a ponta* — inclui latência de rede e serialização HTTP
+A distinção entre as duas abordagens é fundamental para o TCC:
 
-Em ambientes controlados como este (loopback ou rede local Docker), a diferença entre as duas medições é negligenciável, mas a comparação entre elas pode evidenciar overhead de serialização.
+| Perspectiva | Ferramenta | O que mede | Onde reside |
+|---|---|---|---|
+| **Cliente** | K6 | Tempo ponta a ponta (inclui rede + serialização HTTP) | Container Docker |
+| **Servidor** | Micrometer (`@Observed`) | Tempo de processamento por camada (Controller, Service) | Dentro da JVM |
+
+Em ambiente controlado (loopback Docker), a diferença entre as medições é negligenciável — mas a complementaridade é rica: o K6 fornece a visão do "usuário" enquanto `@Observed` fornece a visão do "engenheiro". A correlação entre ambas valida que a degradação medida no servidor se manifesta na experiência do cliente.
+
+---
+
+## Relação K6 ↔ @Observed
+
+```mermaid
+sequenceDiagram
+    participant K6 as K6 (Cliente)
+    participant CTRL as Controller (@Observed)
+    participant SVC as Service (@Observed)
+    participant DB as H2 Database
+
+    K6->>+CTRL: GET /api/owners
+    Note over K6,CTRL: ⏱️ K6 mede: http_req_duration
+
+    CTRL->>+SVC: findAllOwners()
+    Note over CTRL,SVC: ⏱️ @Observed: Controller_Owner_ListAll
+
+    SVC->>+DB: ownerRepository.findAll()
+    Note over SVC,DB: ⏱️ @Observed: Service_Owner_FindAll
+    DB-->>-SVC: List<Owner> (+ EAGER: Pet, Visit)
+    SVC-->>-CTRL: Collection<Owner>
+
+    Note over CTRL: MapStruct → JSON
+    CTRL-->>-K6: 200 OK [JSON]
+
+    Note over K6: Δ(K6 - Controller) = overhead HTTP
+    Note over CTRL: Δ(Controller - Service) = MapStruct + JSON
+    Note over SVC: Service ≈ custo JPA + @Transactional
+```
 
 ---
 
 ## Modelo de Carga: Metodologia RED
 
-O script implementa a **metodologia RED** (Rate, Errors, Duration) proposta por Tom Wilkie (Grafana Labs):
+O script implementa a **metodologia RED** (Rate, Errors, Duration) proposta por Tom Wilkie (Grafana Labs), que Richards e Ford (2020) recomendam como padrão de observabilidade para microsserviços — igualmente aplicável a monolitos modulares.
 
-| Dimensão | O que mede | Métrica no K6 |
+| Dimensão | O que mede | Métrica K6 |
 |---|---|---|
-| **Rate** | Taxa de requisições por segundo | `http_reqs` |
-| **Errors** | Proporção de requisições com falha | `taxa_erro` (Rate customizado) |
+| **Rate** | Requisições por segundo | `http_reqs` |
+| **Errors** | Proporção de falhas | `taxa_erro` (Rate customizado) |
 | **Duration** | Latência das requisições | `http_req_duration` + Trends por endpoint |
 
-### Perfil de carga escalonado
+---
 
-```
-VUs
-50 │              ████████████████████
-10 │  ████████████                    ████████████
- 0 ├──┤────────────┤──────────────────┤────────────┤──
-   0s  30s         2m30s             3m          4m30s
+## Perfil de Carga
+
+O perfil escalonado exercita a aplicação em diferentes níveis de concorrência, revelando comportamentos não-lineares causados por débito técnico:
+
+```mermaid
+gantt
+    title Perfil de Carga K6 — 3min30s total
+    dateFormat ss
+    axisFormat %S
+
+    section Fases
+    Ramp-up 0→30 VUs       :a1, 00, 30s
+    Sustentada 50 VUs       :a2, after a1, 60s
+    Spike 50→100 VUs        :a3, after a2, 30s
+    Estresse 100 VUs        :a4, after a3, 60s
+    Ramp-down 100→0         :a5, after a4, 30s
 ```
 
-Este perfil escalonado — com fase de rampa, estabilização, pico e descida — é fundamental para:
-1. **Aquecimento da JVM:** o compilador JIT otimiza os caminhos críticos durante a rampa
-2. **Identificação de degradação sob carga:** o comportamento estável a 10 VUs vs 50 VUs revela o impacto dos code smells sob contenção
-3. **Verificação de recuperação:** a descida confirma que o sistema libera recursos adequadamente
+| Fase | Duração | VUs | Objetivo Experimental |
+|---|---|---|---|
+| **Ramp-up** | 30s | 0 → 30 | Aquecimento JIT da JVM. Resultados descartáveis. |
+| **Sustentada** | 1min | 30 → 50 | Carga moderada — baseline de operação normal |
+| **Spike** | 30s | 50 → 100 | Transição abrupta — revela N+1 e contenção de locks |
+| **Estresse** | 1min | 100 | Carga máxima sustentada — evidencia degradação acumulativa |
+| **Ramp-down** | 30s | 100 → 0 | Recuperação — verifica liberação de recursos |
+
+> **Justificativa do spike:** Fowler (2018) observa que code smells frequentemente são "invisíveis sob carga baixa e catastróficos sob carga alta". O spike de 50→100 VUs é desenhado para provocar essa transição — se `GET /owners` com EAGER N+1 escala linearmente até 50 VUs mas quadraticamente além, o spike torna isso visível.
+
+> **Princípio de comparabilidade:** para que a comparação baseline × pós-refatoração seja metodologicamente válida, **nenhum parâmetro** do script (stages, thresholds, payloads) pode ser alterado entre as fases. Apenas o código Java muda. Isso isola a variável independente (refatoração) da variável dependente (latência).
 
 ---
 
-## Parametrização e Reprodutibilidade
+## Thresholds como Fitness Functions
 
-O script utiliza payloads parametrizados por VU, garantindo que:
-- Cada VU crie owners/pets únicos (realismo)
-- O comportamento do servidor seja consistente entre fases baseline e pós-refatoração
-- Os mesmos endpoints e perfil de carga sejam exercitados em todas as execuções (determinismo)
-
-> **Princípio de comparabilidade:** para que a comparação experimental seja válida, **nenhum parâmetro do script** (stages, thresholds, payloads, distribuição de endpoints) pode ser alterado entre as fases. Apenas o código da aplicação muda.
-
----
-
-## Thresholds como Hipóteses Experimentais
-
-Os thresholds do K6 funcionam como **critérios de aceitação formalizados**:
+Os thresholds do K6 funcionam como *fitness functions automatizadas* (Ford, Parsons e Kua, 2017): critérios de aceitação formalizados que protegem características operacionais.
 
 ```javascript
 thresholds: {
-    'http_req_duration': ['p(95)<2000'],   // SLO: 95% das req < 2s
-    'taxa_erro': ['rate<0.05'],            // SLO: menos de 5% de erros
+    http_req_duration:        ['p(95)<5000'],    // SLO global
+    taxa_erro:                ['rate<0.10'],      // < 10% de erros
+    latencia_listar_owners:   ['p(95)<4000'],    // N+1 EAGER
+    latencia_criar_owner:     ['p(95)<3000'],    // write-path
+    latencia_consultar_owner: ['p(95)<3000'],    // grafo denso
+    latencia_criar_pet:       ['p(95)<3000'],    // cascata JPA
+    latencia_criar_visit:     ['p(95)<3000'],    // inserção filha
+    latencia_listar_vets:     ['p(95)<2000'],    // N:M EAGER
+    latencia_health:          ['p(95)<500'],     // baseline framework
 }
 ```
 
-No contexto desta pesquisa, é importante observar se o baseline viola esses thresholds sob estresse (o K6 retorna exit code 99 nesse caso). A comparação pós-refatoração revela se a melhoria do código interno impacta a performance dinâmica.
+O K6 retorna exit code 99 quando um threshold é violado. No contexto do TCC:
+- **Violação no baseline:** confirma que o débito técnico causa degradação mensurável
+- **Aprovação no pós-refatoração:** confirma que a refatoração melhorou a fitness function
+
+---
+
+## Métricas Customizadas
+
+| Métrica K6 | Tipo | Endpoint | Anomalia Correlacionada |
+|---|---|---|---|
+| `latencia_listar_owners` | Trend | `GET /owners` | N+1 via EAGER cascata |
+| `latencia_criar_owner` | Trend | `POST /owners` | Write-path completo |
+| `latencia_consultar_owner` | Trend | `GET /owners/{id}` | Grafo denso |
+| `latencia_criar_pet` | Trend | `POST /owners/{id}/pets` | CascadeType.ALL |
+| `latencia_criar_visit` | Trend | `POST .../visits` | FK em tabela filha |
+| `latencia_listar_vets` | Trend | `GET /vets` | N:M EAGER |
+| `latencia_health` | Trend | `GET /actuator/health` | Baseline (sem negócio) |
+| `taxa_erro` | Rate | Todos | Estabilidade global |
+| `owners_criados_com_sucesso` | Counter | `POST /owners` | Throughput efetivo |
 
 ---
 
 ## Interpretação dos Resultados
 
-### Saída do terminal (exemplo anotado)
+### Saída do Terminal
 
 ```
 http_req_duration........: avg=1.2s  min=42ms  med=890ms  max=4.1s  p(90)=2.8s  p(95)=3.4s
-                          ↑ média    ↑ mínimo  ↑ mediana             ↑ p90       ↑ p95
 ```
 
-- **`avg` (média):** útil como referência mas sensível a outliers — não use como métrica primária de SLO
-- **`med` (mediana = p50):** tempo "típico" de resposta — insensível a outliers
-- **`p(95)`:** critério padrão para SLOs; garante experiência aceitável para 95% dos usuários
-- **`max`:** valor de cauda extrema — pode revelar comportamentos degenerativos (ex: N+1 acumulado)
+- **`avg`:** sensível a outliers — usar com cautela como métrica primária
+- **`med` (p50):** tempo "típico" — insensível a outliers
+- **`p(95)`:** critério padrão para SLOs (Ford, Parsons e Kua, 2017)
+- **`max`:** cauda extrema — pode revelar N+1 acumulado ou GC pause
 
-### Métricas customizadas registradas
-
-| Métrica | Tipo K6 | Semântica experimental |
-|---|---|---|
-| `latencia_listar_owners` | Trend | Custo de `findAllOwners()` — FetchType.EAGER cascata N+1 |
-| `latencia_criar_owner` | Trend | Custo do write-path completo (validação → JPA persist) |
-| `latencia_consultar_owner` | Trend | Custo de acesso com grafo owner→pets→visits |
-| `latencia_criar_pet` | Trend | Custo de `savePet()` com CascadeType.ALL |
-| `latencia_criar_visit` | Trend | Custo de inserção em tabela filha com FK |
-| `latencia_listar_vets` | Trend | Custo de relação N:M (Vet→Specialty) EAGER |
-| `latencia_health` | Trend | Baseline de latência do framework (sem lógica de negócio) |
-| `taxa_erro` | Rate | Estabilidade global do sistema sob carga |
-| `owners_criados_com_sucesso` | Counter | Throughput efetivo de owners criados |
+> A diferença `p95 - p50` é um indicador de variabilidade: se alta, sugere comportamento não-determinístico (EAGER com volume variável, GC pause, contenção).
 
 ---
 
-## Protocolo de Coleta de Dados Experimentais
+## Protocolo de Coleta de Dados
 
-Para garantir validade metodológica, seguir o protocolo:
+Para garantir validade metodológica:
 
-```
 1. Verificar que a aplicação está estabilizada (uptime > 60s, JVM aquecida)
-2. Executar o teste com saída redirecionada para arquivo
+2. Executar o teste com saída persistida
 3. Capturar screenshot do dashboard Grafana ao final
-4. Exportar CSV dos painéis de latência via API do Grafana
-5. Registrar timestamp de início e fim do teste
-6. Salvar todos os artefatos em docs/results/baseline/ ou docs/results/pos-refatoracao/
-```
+4. Exportar CSV dos painéis de latência
+5. Registrar timestamps de início e fim
+6. Salvar artefatos em `docs/results/baseline/` ou `docs/results/pos-refatoracao/`
 
 ```bash
-# Execução com saída persistida
 docker compose -f infra/docker-compose.infra.yml \
   --profile testing run --rm k6 run /scripts/load-test.js \
   2>&1 | tee docs/results/baseline/k6-summary-$(date +%Y%m%dT%H%M).txt
 ```
+
+---
+
+## Referências
+
+- Richards, M.; Ford, N. (2020). *Fundamentals of Software Architecture*. O'Reilly.
+- Ford, N.; Parsons, R.; Kua, P. (2017). *Building Evolutionary Architectures*. O'Reilly.
+- Fowler, M. (2018). *Refactoring*, 2nd ed. Addison-Wesley.

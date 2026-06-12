@@ -2,75 +2,120 @@
 
 ## Visão Geral Arquitetural
 
-O Grafana atua como camada de **apresentação e análise** no pipeline de observabilidade. Diferentemente do Prometheus, que é um banco de dados de séries temporais, o Grafana é stateless: ele não armazena dados, apenas os consulta e exibe. Esta separação de responsabilidades (coleta, armazenamento, visualização) é um princípio fundamental da arquitetura de observabilidade moderna.
+O Grafana atua como camada de **apresentação e análise** no pipeline de observabilidade. Diferentemente do Prometheus (banco de séries temporais), o Grafana é *stateless*: não armazena dados, apenas os consulta e exibe. Esta separação de responsabilidades — coleta, armazenamento, visualização — é um princípio fundamental da observabilidade moderna (Richards e Ford, 2020).
 
-### Provisionamento declarativo
+No contexto do TCC, o Grafana funciona como um **radiador de informação** (Ford, Parsons e Kua, 2017): torna visível, em tempo real, se as fitness functions operacionais estão sendo atendidas durante o teste de carga.
 
-Este projeto utiliza o mecanismo de **Infrastructure as Code** do Grafana: dashboards e datasources são definidos em arquivos YAML/JSON versionados, eliminando configuração manual via interface. O Grafana carrega esses arquivos na inicialização e os trata como fontes de verdade.
+### Provisionamento Declarativo
+
+Este projeto utiliza **Infrastructure as Code** para dashboards e datasources — eliminando configuração manual:
 
 ```
 infra/grafana/provisioning/
 ├── datasources/
-│   └── prometheus.yml    # Datasource Prometheus pré-configurado
+│   └── prometheus.yml           # Datasource Prometheus pré-configurado
 └── dashboards/
-    ├── dashboards.yml     # Provider: define o diretório de dashboards
-    ├── tcc-endpoints-k6.json    # Dashboard: métricas de endpoint e carga
-    └── tcc-jvm-spring-boot.json # Dashboard: métricas de runtime JVM
+    ├── dashboards.yml           # Provider: define diretório de dashboards
+    ├── tcc-endpoints-k6.json    # Métricas HTTP + @Observed por camada
+    └── tcc-jvm-spring-boot.json # Runtime JVM (heap, GC, threads, CPU)
+```
+
+---
+
+## Dashboard: TCC — Endpoints & @Observed (PetClinic)
+
+O dashboard principal está organizado em **3 seções**, cada uma com um nível diferente de granularidade:
+
+### Seção 1: Visão Geral — Erros e Throughput
+
+| Painel | Query PromQL | O que Revela |
+|---|---|---|
+| Taxa de Erro HTTP (%) | `100 * sum(rate(...{outcome=~"CLIENT_ERROR\|SERVER_ERROR"}[2m])) / sum(rate(...[2m]))` | Estabilidade global sob carga |
+| Latência p95 Global | `histogram_quantile(0.95, sum(rate(..._bucket[2m])) by (le)) * 1000` | SLO operacional |
+| Throughput por Endpoint | `sum by (uri, method) (rate(..._count[1m]))` | Distribuição de carga entre endpoints |
+| Erros por Endpoint/Status | `sum by (uri, status) (rate(...{outcome=~"..."}[1m]))` | Qual endpoint gera mais erros |
+
+### Seção 2: Latência por Endpoint (p50/p95/p99)
+
+Um painel para cada endpoint crítico:
+
+| Painel | URI Template | Anomalia Monitorada |
+|---|---|---|
+| GET /owners | `/api/owners` (method=GET) | N+1 EAGER cascata |
+| POST /owners | `/api/owners` (method=POST) | Write-path completo |
+| GET /owners/{ownerId} | `/api/owners/{ownerId}` | Grafo denso |
+| GET /vets | `/api/vets` | N:M EAGER |
+| POST /owners/{id}/pets | `/api/owners/{ownerId}/pets` | Cascata JPA |
+| POST /visits | `/api/visits` | Inserção em tabela filha |
+| GET /actuator/health | `/actuator/health` | Baseline (sem negócio) |
+
+> O painel de health check serve como **controle experimental**: a latência deve permanecer < 10ms independente da carga, confirmando que a degradação nos outros endpoints é causada pela lógica de negócio, não pelo framework.
+
+### Seção 3: @Observed — Tempo de Execução por Camada
+
+Esta seção é a **mais importante para o TCC** — fornece a evidência de onde o tempo é gasto dentro da aplicação.
+
+| Painel | Métrica | Visualização |
+|---|---|---|
+| **p95 por @Observed** | `metodo_execucao_seconds_bucket` agrupado por `spring_observation_contextual_name` | Time series comparativo |
+| **Taxa de Erro por @Observed** | `metodo_execucao_seconds_count{error!="none"}` | Gauge com threshold |
+| **Throughput por @Observed** | `metodo_execucao_seconds_count` por `contextualName` | Time series |
+
+#### Query Principal: p95 por contextualName
+
+```promql
+histogram_quantile(0.95,
+  sum(rate(metodo_execucao_seconds_bucket{job="spring-petclinic-rest"}[1m]))
+  by (le, spring_observation_contextual_name)
+) * 1000
+```
+
+Esta query retorna uma série temporal para cada método instrumentado. A comparação visual entre `Controller_Owner_ListAll` e `Service_Owner_FindAll` isola o overhead de serialização (MapStruct + JSON).
+
+#### Query: Throughput por método
+
+```promql
+sum by (spring_observation_contextual_name) (
+  rate(metodo_execucao_seconds_count{job="spring-petclinic-rest"}[1m])
+)
 ```
 
 ---
 
 ## Interpretação dos Painéis
 
-### Ausência de dados ("No data")
-
-A ausência de dados em um painel pode ter múltiplas causas, com diagnósticos distintos:
+### Ausência de Dados ("No data")
 
 | Causa | Diagnóstico | Resolução |
 |---|---|---|
-| Nenhuma requisição ao endpoint | Throughput = 0 no mesmo período | Gerar tráfego (testes de carga ou chamadas manuais) |
-| Métrica com lazy registration | Ausência de série no Prometheus Explorer | Realizar ao menos uma chamada ao endpoint instrumentado |
-| Tipo de métrica errado (summary vs histogram) | `_bucket` ausente no `/actuator/prometheus` | Habilitar `percentiles-histogram=true` |
-| Label incorreto na query | Série existe mas filtro não corresponde | Validar `uri`, `method`, `outcome`, `job` no Prometheus UI |
-| Janela de tempo inadequada | Teste ocorreu fora do intervalo selecionado | Ajustar range de tempo no painel |
+| Nenhuma requisição ao endpoint | Throughput = 0 | Gerar tráfego (K6 ou curl manual) |
+| Lazy registration do Micrometer | Série ausente no Prometheus | Fazer ao menos 1 chamada ao endpoint |
+| Summary em vez de Histogram | `_bucket` ausente no `/actuator/prometheus` | Habilitar `percentiles-histogram=true` |
+| Label incorreto | Série existe mas filtro falha | Validar `uri`, `method`, `job` no Prometheus UI |
+| Janela de tempo inadequada | Teste ocorreu fora do intervalo | Ajustar range no seletor do Grafana |
 
-### Interpretação de histogramas de latência
+### Leitura de Histogramas de Latência
 
-Os painéis de latência usam `histogram_quantile()` para calcular percentis a partir dos buckets do Prometheus:
+- **p50 (mediana):** tempo "típico" — insensível a outliers
+- **p95:** critério padrão de SLO — 95% das requisições completaram em ≤ X ms
+- **p99:** captura *tail latency* — os casos extremos
 
-- **p50 (mediana):** metade das requisições completou em ≤ X ms
-- **p95:** 95% das requisições completaram em ≤ X ms — métrica padrão de SLO
-- **p99:** 99% completaram em ≤ X ms — captura os casos extremos (*tail latency*)
-
-> A diferença entre p95 e p99 revela a presença de *outliers*: uma diferença grande (ex: p95=200ms, p99=2000ms) indica comportamento não-determinístico, frequentemente causado por contenção de recursos, garbage collection ou N+1 queries.
-
-### Taxa de erro
-
-O painel "Taxa de Erro HTTP (4xx + 5xx)" usa o label `outcome` (não `status`):
-
-```promql
-outcome=~"CLIENT_ERROR|SERVER_ERROR"
-```
-
-Esta distinção é relevante porque:
-- **4xx (CLIENT_ERROR):** erros de validação, payload inválido — indicam problemas no contrato da API
-- **5xx (SERVER_ERROR):** exceções não tratadas, falhas de infraestrutura — indicam instabilidade do serviço
-
-Para fins do experimento, ambas as categorias são relevantes: taxa de erro 4xx elevada durante testes de carga pode indicar problemas na validação de dados nos controllers do PetClinic, enquanto 5xx pode revelar falhas na camada `ClinicServiceImpl` ou cascatas JPA sob contenção.
+> A diferença p95 - p99 revela a presença de *outliers*: diferença grande (ex: p95=200ms, p99=2000ms) indica comportamento não-determinístico — frequentemente N+1 com volume variável ou GC pause.
 
 ---
 
 ## Correlação entre Painéis para Análise Experimental
 
-A análise comparativa (baseline × pós-refatoração) deve considerar os painéis em conjunto, não isoladamente:
+A análise comparativa (baseline × pós-refatoração) deve considerar os painéis em conjunto:
 
-| Padrão observado | Hipótese | Investigação |
+| Padrão Observado | Hipótese | Investigação |
 |---|---|---|
 | p99 alto + CPU alta | Gargalo computacional (Long Method) | Verificar `@Observed` p99 por método |
 | p99 alto + CPU baixa | Gargalo de I/O (N+1 queries) | Verificar logs SQL do Hibernate |
-| Taxa de erro > 0% + p95 baixo | Falhas rápidas (validação rejeitando payload) | Verificar distribuição por status no painel de erros |
-| Heap crescente durante carga | Possível memory pressure | Correlacionar com GC pause time no dashboard JVM |
-| Threads ativas ≫ VUs do K6 | Contenção de threads Tomcat | Revisar pool de conexões HikariCP |
+| Taxa erro > 0% + p95 baixo | Falhas rápidas (validação rejeitando payload) | Verificar distribuição por status |
+| Heap crescente durante carga | Memory pressure (EAGER carregando grafos) | Correlacionar com GC pause no dashboard JVM |
+| p95 Service ≈ p95 Controller | Overhead de serialização desprezível | O gargalo está no JPA, não no MapStruct |
+| **p95 Service ≪ p95 Controller** | **MapStruct/JSON domina a latência** | Investigar tamanho do payload JSON |
 
 ---
 
@@ -79,7 +124,6 @@ A análise comparativa (baseline × pós-refatoração) deve considerar os pain�
 ### Via API REST do Grafana
 
 ```bash
-# Exportar dados de um painel como CSV (requer autenticação)
 curl -u admin:admin \
   "http://localhost:3000/api/datasources/proxy/1/api/v1/query_range" \
   --data-urlencode 'query=histogram_quantile(0.95, ...)' \
@@ -88,8 +132,15 @@ curl -u admin:admin \
   --data-urlencode 'step=15s'
 ```
 
-### Via interface
+### Via Interface
 
-**Painel → ⋮ → Inspect → Data → Download CSV** — exporta os pontos da série temporal exibida no painel para o intervalo selecionado.
+**Painel → ⋮ → Inspect → Data → Download CSV** — exporta os pontos da série temporal para o intervalo selecionado.
 
-> **Recomendação:** para documentar o baseline e o pós-refatoração, exporte os dados como CSV e calcule as estatísticas (média, p95, máximo) em uma planilha ou script Python. Isso garante reprodutibilidade dos resultados apresentados no TCC.
+> **Recomendação:** exporte os dados como CSV e calcule estatísticas (média, p95, máximo) em planilha ou script Python. Isso garante **reprodutibilidade** dos resultados apresentados no TCC e permite testes estatísticos formais (Mann-Whitney U, Wilcoxon) entre baseline e pós-refatoração.
+
+---
+
+## Referências
+
+- Richards, M.; Ford, N. (2020). *Fundamentals of Software Architecture*. O'Reilly.
+- Ford, N.; Parsons, R.; Kua, P. (2017). *Building Evolutionary Architectures*. O'Reilly.

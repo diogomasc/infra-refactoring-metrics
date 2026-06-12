@@ -1,8 +1,15 @@
 # LEIAME — Infraestrutura de Observabilidade (TCC)
 
-## Visão Geral
+## Contexto no TCC
 
-Esta pasta contém a **stack de observabilidade Dockerizada** para o projeto de TCC. Todos os serviços são provisionados via Docker Compose e se comunicam com a aplicação Spring PetClinic REST rodando no host (porta 9966).
+Este repositório contém a **stack de observabilidade Dockerizada** que compõe a infraestrutura experimental do TCC. O projeto de pesquisa é dividido em **dois sub-projetos independentes**, sob mesma orientação acadêmica, divididos em repositórios separados para manter rastreabilidade:
+
+| Repositório | Escopo | Função no Experimento |
+|---|---|---|
+| **spring-petclinic-rest** | Aplicação sob teste | Código Java com anomalias estruturais, instrumentação `@Observed`, análise estática |
+| **infra** (este) | Stack de observabilidade | Prometheus, Grafana, K6 — coleta e visualização de métricas dinâmicas |
+
+A comunicação entre ambos é via rede: o Prometheus (Docker) faz scrape da aplicação (host, porta 9966), e o K6 (Docker) envia requisições HTTP para os endpoints da API.
 
 ---
 
@@ -10,18 +17,20 @@ Esta pasta contém a **stack de observabilidade Dockerizada** para o projeto de 
 
 ```mermaid
 flowchart TD
-    subgraph HOST["HOST"]
-        APP["Spring PetClinic REST\n:9966\n/petclinic/actuator/prometheus"]
-
-        subgraph DOCKER["Docker Compose (infra)"]
-            PROM["Prometheus\n:9090"]
-            GRAF["Grafana\n:3000"]
-            K6["K6\n(sob demanda)"]
-        end
+    subgraph HOST["HOST (JVM)"]
+        APP["Spring PetClinic REST\n:9966\nInstrumentado com @Observed"]
+        ACT["/petclinic/actuator/prometheus"]
+        APP --> ACT
     end
 
-    PROM -- "scrape /actuator/prometheus\na cada 5s" --> APP
-    K6 -- "HTTP requests\n(6 endpoints críticos)" --> APP
+    subgraph DOCKER["Docker Compose (infra)"]
+        PROM["Prometheus\n:9090\nTSDB"]
+        GRAF["Grafana\n:3000\nDashboards"]
+        K6["K6\n(sob demanda)\nTeste de carga"]
+    end
+
+    PROM -- "scrape a cada 5s\n(metodo_execucao_seconds_*\n+ http_server_requests_*)" --> ACT
+    K6 -- "HTTP requests\n(7 endpoints críticos)" --> APP
     GRAF -- "PromQL queries" --> PROM
 ```
 
@@ -32,22 +41,22 @@ flowchart TD
 ```
 infra/
 ├── docker-compose.infra.yml        # Orquestração dos serviços
-├── prometheus.yml                   # Configuração de scrape do Prometheus
+├── prometheus.yml                   # Configuração de scrape
 ├── grafana/
 │   └── provisioning/
 │       ├── datasources/
-│       │   └── prometheus.yml       # Datasource Prometheus pré-configurado
+│       │   └── prometheus.yml       # Datasource pré-configurado
 │       └── dashboards/
-│           ├── dashboards.yml       # Provider: define diretório de dashboards
-│           ├── tcc-endpoints-k6.json    # Dashboard: métricas de endpoint e carga
-│           └── tcc-jvm-spring-boot.json # Dashboard: métricas de runtime JVM
+│           ├── dashboards.yml       # Provider de dashboards
+│           ├── tcc-endpoints-k6.json    # Endpoints + @Observed
+│           └── tcc-jvm-spring-boot.json # Runtime JVM
 ├── k6/
 │   └── load-test.js                 # Script de carga (metodologia RED)
 └── docs/
     └── guides/
-        ├── grafana.md               # Guia detalhado do Grafana
-        ├── k6-load-testing.md       # Guia detalhado do K6
-        └── prometheus-micrometer.md # Guia detalhado do Prometheus/Micrometer
+        ├── grafana.md               # Guia: visualização e interpretação
+        ├── k6-load-testing.md       # Guia: metodologia e perfil de carga
+        └── prometheus-micrometer.md # Guia: modelo de dados e PromQL
 ```
 
 ---
@@ -63,7 +72,7 @@ infra/
 
 ## Comandos
 
-### Subir a stack de observabilidade
+### Subir a stack
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml up -d
@@ -75,13 +84,13 @@ docker compose -f infra/docker-compose.infra.yml up -d
 docker compose -f infra/docker-compose.infra.yml ps
 ```
 
-### Derrubar a stack
+### Derrubar
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml down
 ```
 
-### Derrubar e limpar volumes (reset total)
+### Reset total (com volumes)
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml down -v
@@ -108,8 +117,6 @@ docker compose -f infra/docker-compose.infra.yml \
 
 ## Configuração do Prometheus
 
-O arquivo `prometheus.yml` define o target de scrape:
-
 ```yaml
 - job_name: "spring-petclinic-rest"
   metrics_path: "/petclinic/actuator/prometheus"
@@ -118,36 +125,42 @@ O arquivo `prometheus.yml` define o target de scrape:
     - targets: ["host.docker.internal:9966"]
       labels:
         app: "spring-petclinic-rest"
-        fase: "baseline"   # Alterar para "pos-refatoracao" na Fase 3
+        fase: "baseline"   # Alterar para "pos-refatoracao" na Fase 2
 ```
 
-O label `fase` é usado para segmentar dashboards no Grafana entre a coleta baseline e pós-refatoração.
+O label `fase` segmenta os dados no Grafana entre coleta baseline e pós-refatoração.
+
+### Métricas Coletadas
+
+| Métrica | Origem | Finalidade |
+|---|---|---|
+| `http_server_requests_seconds_*` | Spring Boot Actuator | Latência HTTP por endpoint |
+| `metodo_execucao_seconds_*` | `@Observed` (Micrometer) | Latência por camada (Controller/Service) |
+| `jvm_*`, `process_*` | JVM MBeans | Heap, GC, threads, CPU |
 
 ---
 
-## Script K6 — Metodologia RED
+## Script K6 — Perfil de Carga
 
-O script `k6/load-test.js` exercita os endpoints principais do PetClinic seguindo a metodologia **RED** (Rate, Errors, Duration):
+| Fase | Duração | VUs | Objetivo |
+|---|---|---|---|
+| Ramp-up | 30s | 0 → 30 | Aquecimento JIT |
+| Sustentada | 1min | 30 → 50 | Baseline de operação |
+| Spike | 30s | 50 → 100 | Transição abrupta |
+| Estresse | 1min | 100 | Degradação acumulativa |
+| Ramp-down | 30s | 100 → 0 | Recuperação |
 
-| Endpoint | Método | Métrica K6 |
+### Endpoints Exercitados
+
+| Endpoint | Método | Anomalia Correlacionada |
 |---|---|---|
-| `/petclinic/api/owners` | GET | `latencia_listar_owners` |
-| `/petclinic/api/owners` | POST | `latencia_criar_owner` |
-| `/petclinic/api/owners/{id}` | GET | `latencia_consultar_owner` |
-| `/petclinic/api/owners/{id}/pets` | POST | `latencia_criar_pet` |
-| `/petclinic/api/owners/{ownerId}/pets/{petId}/visits` | POST | `latencia_criar_visit` |
-| `/petclinic/api/vets` | GET | `latencia_listar_vets` |
-| `/petclinic/actuator/health` | GET | `latencia_health` |
-
-### Perfil de carga (não alterar entre fases)
-
-| Fase | Duração | VUs |
-|---|---|---|
-| Ramp-up | 30s | 0 → 30 |
-| Sustentada | 1min | 30 → 50 |
-| Spike | 30s | 50 → 100 |
-| Estresse | 1min | 100 |
-| Ramp-down | 30s | 100 → 0 |
+| `/petclinic/api/owners` | GET | N+1 EAGER cascata |
+| `/petclinic/api/owners` | POST | Write-path completo |
+| `/petclinic/api/owners/{id}` | GET | Grafo denso |
+| `/petclinic/api/owners/{id}/pets` | POST | CascadeType.ALL |
+| `/petclinic/api/owners/{ownerId}/pets/{petId}/visits` | POST | FK em tabela filha |
+| `/petclinic/api/vets` | GET | N:M EAGER |
+| `/petclinic/actuator/health` | GET | Baseline framework |
 
 ---
 
@@ -155,18 +168,26 @@ O script `k6/load-test.js` exercita os endpoints principais do PetClinic seguind
 
 Dois dashboards são provisionados automaticamente:
 
-1. **tcc-endpoints-k6** — Latência por endpoint, throughput, taxa de erro
-2. **tcc-jvm-spring-boot** — Métricas JVM (heap, GC, threads, CPU)
+### 1. TCC — Endpoints & @Observed (PetClinic)
+
+Três seções:
+- **Visão Geral:** taxa de erro, p95 global, throughput por endpoint
+- **Latência por Endpoint:** p50/p95/p99 para cada endpoint crítico
+- **@Observed:** p95 por `contextualName`, throughput por método, taxa de erro por bean
+
+### 2. TCC — JVM & Spring Boot
+
+Métricas de runtime: heap, GC pause, threads ativas, CPU. Útil para correlacionar degradação de latência com pressão de memória (EAGER carregando grafos grandes).
 
 ---
 
 ## Guias Detalhados
 
-Para informações aprofundadas sobre cada ferramenta, consulte os guias em `docs/guides/`:
-
-- [Grafana](docs/guides/grafana.md) — Provisionamento declarativo, dashboards, alertas
-- [K6 Load Testing](docs/guides/k6-load-testing.md) — Metodologia RED, stages, thresholds
-- [Prometheus + Micrometer](docs/guides/prometheus-micrometer.md) — Scrape, métricas, histogramas
+| Guia | Conteúdo |
+|---|---|
+| [Grafana](docs/guides/grafana.md) | Dashboard @Observed, interpretação de painéis, exportação de dados |
+| [K6 Load Testing](docs/guides/k6-load-testing.md) | Metodologia RED, perfil de carga, thresholds como fitness functions |
+| [Prometheus + Micrometer](docs/guides/prometheus-micrometer.md) | Modelo de dados, @Observed, queries PromQL |
 
 ---
 
@@ -174,6 +195,7 @@ Para informações aprofundadas sobre cada ferramenta, consulte os guias em `doc
 
 | Problema | Solução |
 |---|---|
-| Prometheus não coleta métricas | Verificar se a aplicação está rodando na porta 9966 e se `/petclinic/actuator/prometheus` responde |
-| Grafana sem dados | Verificar se o Prometheus está UP em http://localhost:9090/targets |
-| K6 falha com connection refused | Verificar se a aplicação está rodando antes de executar o load test |
+| Prometheus não coleta | Verificar se a app roda na porta 9966 e `/petclinic/actuator/prometheus` responde |
+| Grafana sem dados | Verificar Prometheus UP em http://localhost:9090/targets |
+| K6 "connection refused" | Verificar se a aplicação está rodando antes do load test |
+| @Observed sem dados | Fazer ao menos 1 requisição ao endpoint instrumentado (lazy registration) |

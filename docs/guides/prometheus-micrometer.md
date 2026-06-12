@@ -2,38 +2,47 @@
 
 ## Visão Geral Arquitetural
 
-O pipeline de observabilidade dinâmica deste projeto segue o padrão **Push-Pull** de telemetria: a aplicação instrumentada expõe métricas no formato OpenMetrics (Prometheus), e um agente de coleta externo as captura periodicamente (*scrape*). A camada de visualização consome os dados do servidor de séries temporais e os apresenta em painéis analíticos.
+O pipeline de observabilidade dinâmica segue o padrão **Push-Pull** de telemetria estabelecido pela CNCF: a aplicação instrumentada expõe métricas no formato OpenMetrics via endpoint dedicado, e o Prometheus as captura periodicamente (*scrape*). O Grafana consome os dados do TSDB e os apresenta em painéis analíticos.
 
-```
-Aplicação (Micrometer) → /actuator/prometheus → Prometheus (TSDB) → Grafana (Visualização)
+```mermaid
+flowchart LR
+    subgraph APP["Spring PetClinic REST (:9966)"]
+        MIC["Micrometer\n(Observation API)"]
+        ACT["/actuator/prometheus"]
+        MIC -->|"expõe"| ACT
+    end
+
+    subgraph INFRA["Docker (infra/)"]
+        PROM["Prometheus\n(:9090)\nTSDB"]
+        GRAF["Grafana\n(:3000)\nVisualização"]
+    end
+
+    PROM -->|"scrape a cada 5s"| ACT
+    GRAF -->|"PromQL queries"| PROM
 ```
 
-Este padrão, estabelecido pela Cloud Native Computing Foundation (CNCF), oferece baixo acoplamento entre o produtor de métricas e o consumidor, garantindo que a instrumentação não interfira no comportamento funcional da aplicação instrumentada.
+Richards e Ford (2020) classificam observabilidade como uma *fitness function operacional*: ela não testa funcionalidade, mas protege características de runtime (latência, throughput, erro). Este pipeline implementa essa visão — as métricas são a evidência empírica do impacto do débito técnico.
 
 ---
 
 ## Modelo de Dados do Prometheus
 
-O Prometheus utiliza quatro tipos primitivos de métricas:
-
 | Tipo | Descrição | Uso neste projeto |
 |---|---|---|
-| **Counter** | Valor monotonicamente crescente | Total de requisições HTTP (`_total`) |
-| **Gauge** | Valor instantâneo, pode crescer ou diminuir | Heap JVM, threads ativas |
+| **Counter** | Monotonicamente crescente | Total de requisições (`_total`) |
+| **Gauge** | Valor instantâneo | Heap JVM, threads ativas |
 | **Histogram** | Distribui observações em buckets `le` | Latência HTTP (`_bucket`, `_sum`, `_count`) |
-| **Summary** | Percentis pré-calculados no cliente | Alternativa ao Histogram (sem `histogram_quantile`) |
+| **Summary** | Percentis pré-calculados | Não utilizado (preferimos Histogram) |
 
-> **Decisão arquitetural:** este projeto usa **Histogram** (não Summary) para métricas de latência. Histogramas permitem calcular percentis arbitrários no servidor Prometheus via `histogram_quantile()` e agregar dados de múltiplas instâncias. O tradeoff é maior cardinalidade de séries temporais.
+> **Decisão arquitetural:** este projeto usa **Histogram** (não Summary) para métricas de latência. Histogramas permitem calcular percentis arbitrários no servidor via `histogram_quantile()` e agregar dados de múltiplas instâncias. O trade-off é maior cardinalidade de séries temporais — aceitável em ambiente controlado de pesquisa. (Richards e Ford, 2020: "todo trade-off é contextual".)
 
-### Configuração obrigatória (Spring Boot 4.x)
-
-Por padrão, o Spring Boot emite métricas HTTP como `summary`. Para habilitar a distribuição em histogramas:
+### Configuração obrigatória
 
 ```properties
 management.metrics.distribution.percentiles-histogram.http.server.requests=true
 ```
 
-Esta propriedade instrui o Micrometer a publicar linhas `_bucket{le="..."}` para cada valor de `le` (Less or Equal), possibilitando:
+Habilita a publicação de linhas `_bucket{le="..."}` para cada bucket, permitindo:
 
 ```promql
 histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[1m])) by (le))
@@ -41,17 +50,15 @@ histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[1m])) by (
 
 ---
 
-## Instrumentação via Observation API
+## Instrumentação via Observation API (`@Observed`)
 
-A **Observation API** (Micrometer 1.10+, integrada ao Spring Boot 3.x/4.x) representa uma evolução sobre a API de métricas direta. Uma única `Observation` pode propagar contexto para múltiplos backends (métricas, rastreamento distribuído, logs) sem alteração no código de negócio.
+A **Observation API** (Micrometer 1.10+, integrada ao Spring Boot 3.x/4.x) é o mecanismo principal de instrumentação granular deste TCC. Uma única `Observation` propaga contexto para métricas sem alteração no código de negócio — alinhado com o princípio de Fowler (2018) de que instrumentação não deve alterar o comportamento observável.
 
-### Mecanismo de ativação via AOP
-
-A anotação `@Observed` requer um `ObservedAspect` registrado como bean Spring, que interceta chamadas via proxy AspectJ:
+### Configuração
 
 ```java
 @Configuration(proxyBeanMethods = false)
-public class ObservationConfig {
+public class ObservabilityConfig {
     @Bean
     ObservedAspect observedAspect(ObservationRegistry registry) {
         return new ObservedAspect(registry);
@@ -59,80 +66,116 @@ public class ObservationConfig {
 }
 ```
 
-**Restrições arquiteturais:**
-- Aplica-se apenas a **Spring Beans** gerenciados pelo contexto de aplicação
-- Não funciona em chamadas `static`, chamadas internas à mesma classe, ou objetos instanciados com `new`
-- Quando aplicada em nível de classe, instrumenta todos os métodos públicos
+### Convenção de Nomenclatura
 
-### Métricas geradas por `@Observed`
+Todas as anotações `@Observed` neste projeto seguem a mesma convenção:
 
-Para um bean anotado com `@Observed(name = "clinic.service")`, o Prometheus recebe:
+```java
+@Observed(name = "metodo.execucao", contextualName = "Service_Owner_FindAll")
+```
+
+- **`name = "metodo.execucao"`** — fixo para todas as observações. Gera a métrica `metodo_execucao_seconds_*` no Prometheus. O `name` fixo permite agregar todas as observações numa única query PromQL.
+- **`contextualName = "[Camada]_[Entidade]_[Ação]"`** — identificador único. Aparece como tag `spring_observation_contextual_name` no Prometheus.
+
+> **Decisão:** usar `name` fixo em vez de `name` por bean (ex: `clinic.service`, `owner.controller`) simplifica a agregação: uma única query retorna todas as séries, filtráveis por `contextualName`. O trade-off é que não se pode usar `name` para distinguir beans — mas o `contextualName` cumpre essa função.
+
+### Métricas Geradas
+
+Para cada método anotado, o Prometheus recebe:
 
 | Série | Tags | Semântica |
 |---|---|---|
-| `clinic_service_seconds_bucket` | `le`, `method`, `error`, `class` | Distribuição de latência por método |
-| `clinic_service_seconds_count` | `method`, `error`, `class` | Total de invocações |
-| `clinic_service_seconds_sum` | `method`, `error`, `class` | Soma acumulada do tempo de execução |
-| `clinic_service_active_seconds` | `method`, `class` | Invocações em andamento (concorrência) |
+| `metodo_execucao_seconds_bucket` | `le`, `class`, `method`, `error`, `spring_observation_contextual_name` | Distribuição de latência |
+| `metodo_execucao_seconds_count` | `class`, `method`, `error`, `spring_observation_contextual_name` | Total de invocações |
+| `metodo_execucao_seconds_sum` | `class`, `method`, `error`, `spring_observation_contextual_name` | Soma acumulada |
 
-A tag `error` assume `"none"` em execuções bem-sucedidas ou o nome da exceção capturada (ex: `"RuntimeException"`), permitindo calcular taxa de erro por método.
+A tag `error` assume `"none"` em execuções normais ou o nome da exceção capturada (ex: `"RuntimeException"`).
+
+### Restrições
+
+- Funciona apenas em **Spring Beans** gerenciados pelo contexto
+- Não intercepta chamadas internas à mesma classe (*self-invocation*)
+- Não funciona em proxies já criados pelo Spring Data JPA (razão pela qual o Repository não é instrumentado diretamente — ver [instrumentacao-dinamica-observability.md](../../spring-petclinic-rest/docs/instrumentacao-dinamica-observability.md))
 
 ---
 
 ## Consultas PromQL de Referência
 
-### Latência por percentil
+### Latência p95 global
 
 ```promql
-# p95 global de todas as requisições HTTP
 histogram_quantile(0.95,
-  sum(rate(http_server_requests_seconds_bucket{job="<job-name>"}[1m])) by (le)
+  sum(rate(http_server_requests_seconds_bucket{job="spring-petclinic-rest"}[1m])) by (le)
 ) * 1000
+```
 
-# p99 de um endpoint específico
-histogram_quantile(0.99,
+### Latência p95 por endpoint
+
+```promql
+histogram_quantile(0.95,
   sum(rate(http_server_requests_seconds_bucket{
-    job="<job-name>", uri="<uri-template>", method="<HTTP-METHOD>"
+    job="spring-petclinic-rest", uri="/api/owners", method="GET"
   }[1m])) by (le)
 ) * 1000
 ```
 
-> **Nota:** O `uri` corresponde ao **template da rota** registrado pelo Spring MVC (ex: `/api/owners/{ownerId}`), não à URL real da requisição (ex: `/api/owners/1`).
+> O `uri` corresponde ao **template da rota** registrado pelo Spring MVC (ex: `/api/owners/{ownerId}`), não à URL real.
 
 ### Taxa de erro
 
 ```promql
-# Percentual de requisições com outcome CLIENT_ERROR ou SERVER_ERROR
 100 *
   sum(rate(http_server_requests_seconds_count{
-    job="<job-name>", outcome=~"CLIENT_ERROR|SERVER_ERROR"
+    job="spring-petclinic-rest", outcome=~"CLIENT_ERROR|SERVER_ERROR"
   }[2m]))
 /
-  sum(rate(http_server_requests_seconds_count{job="<job-name>"}[2m]))
+  sum(rate(http_server_requests_seconds_count{job="spring-petclinic-rest"}[2m]))
 ```
 
-> **Distinção crítica:** o label `status` contém o código HTTP numérico (`200`, `400`, `500`); o label `outcome` contém a categorização semântica (`SUCCESS`, `CLIENT_ERROR`, `SERVER_ERROR`). Para taxa de erro abrangente, use `outcome`.
+> Use `outcome` (semântico: `SUCCESS`, `CLIENT_ERROR`, `SERVER_ERROR`), não `status` (numérico: `200`, `400`).
 
-### Throughput
-
-```promql
-sum by (uri, method) (
-  rate(http_server_requests_seconds_count{job="<job-name>"}[1m])
-)
-```
-
-### Comparação cross-bean (@Observed)
+### p95 por @Observed (comparação cross-camada)
 
 ```promql
 histogram_quantile(0.95,
-  sum by (le, __name__) (
-    rate({job="<job-name>", __name__=~".*_service_seconds_bucket"}[1m])
-  )
+  sum(rate(metodo_execucao_seconds_bucket{job="spring-petclinic-rest"}[1m]))
+  by (le, spring_observation_contextual_name)
 ) * 1000
+```
+
+### Delta Controller - Service (overhead de serialização)
+
+```promql
+histogram_quantile(0.95,
+  sum(rate(metodo_execucao_seconds_bucket{
+    spring_observation_contextual_name="Controller_Owner_ListAll"
+  }[1m])) by (le)
+) * 1000
+-
+histogram_quantile(0.95,
+  sum(rate(metodo_execucao_seconds_bucket{
+    spring_observation_contextual_name="Service_Owner_FindAll"
+  }[1m])) by (le)
+) * 1000
+```
+
+### Throughput por @Observed
+
+```promql
+sum by (spring_observation_contextual_name) (
+  rate(metodo_execucao_seconds_count{job="spring-petclinic-rest"}[1m])
+)
 ```
 
 ---
 
 ## Considerações sobre Cardinalidade
 
-Histogramas têm custo em cardinalidade: cada combinação única de labels gera uma série temporal distinta. Em produção, é necessário limitar os valores de labels dinâmicos (ex: IDs de usuário como label são antipadrão). Para fins de pesquisa controlada com endpoints fixos, este custo é negligenciável.
+Histogramas têm custo em cardinalidade: cada combinação de labels gera uma série temporal. Para o ambiente controlado deste TCC (endpoints fixos, labels estáticos, sem IDs dinâmicos), o custo é negligenciável. Em produção, labels dinâmicos (ex: user_id) seriam antipadrão — mas não se aplicam aqui.
+
+---
+
+## Referências
+
+- Richards, M.; Ford, N. (2020). *Fundamentals of Software Architecture*. O'Reilly.
+- Fowler, M. (2018). *Refactoring*, 2nd ed. Addison-Wesley.
