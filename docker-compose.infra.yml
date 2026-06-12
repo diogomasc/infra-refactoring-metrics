@@ -1,5 +1,5 @@
 # --- Stack de observabilidade do TCC ---
-# Componentes: SonarQube, PostgreSQL, Prometheus, Grafana e K6
+# Componentes: Prometheus, Grafana e K6
 #
 # Execute a partir da raiz do projeto:
 #   docker compose -f infra/docker-compose.infra.yml up -d
@@ -12,69 +12,6 @@
 #     --profile testing run --rm k6 run /scripts/load-test.js
 
 services:
-
-  # ── Banco do SonarQube ──────────────────────────────────────────────────────
-  # O SonarQube usa PostgreSQL para persistir análises e metadados.
-  postgres:
-    image: postgres:15-alpine
-    container_name: tcc-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: sonarqube
-      POSTGRES_USER: sonar
-      POSTGRES_PASSWORD: sonar
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - tcc-infra
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sonar -d sonarqube"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: 512M
-        reservations:
-          memory: 128M
-
-  # ── SonarQube ───────────────────────────────────────────────────────────────
-  # Análise estática: CC, CBO, LCOM, TDR, code smells (God Class, etc.)
-  # Requer vm.max_map_count ≥ 524288 no host (ver README).
-  sonarqube:
-    image: sonarqube:community
-    container_name: tcc-sonarqube
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/sonarqube
-      SONAR_JDBC_USERNAME: sonar
-      SONAR_JDBC_PASSWORD: sonar
-      SONAR_CE_JAVAOPTS: "-Xmx512m -Xms128m"
-      SONAR_WEB_JAVAOPTS: "-Xmx512m -Xms128m"
-      # Xms = Xmx obrigatório a partir do Elasticsearch 8.x (SonarQube ≥ 26.x)
-      SONAR_SEARCH_JAVAOPTS: "-Xmx1g -Xms1g"
-    ports:
-      - "9000:9000"
-    volumes:
-      - sonarqube_data:/opt/sonarqube/data
-      - sonarqube_logs:/opt/sonarqube/logs
-      - sonarqube_extensions:/opt/sonarqube/extensions
-    networks:
-      - tcc-infra
-    ulimits:
-      nofile:
-        soft: 65536
-        hard: 65536
-    deploy:
-      resources:
-        limits:
-          memory: 3G
-        reservations:
-          memory: 2G
 
   # ── Prometheus ──────────────────────────────────────────────────────────────
   # Coleta métricas Micrometer do Spring Boot via /actuator/prometheus.
@@ -153,10 +90,6 @@ services:
 # ── Volumes persistentes ────────────────────────────────────────────────────
 # Mantêm dados entre reinícios do stack.
 volumes:
-  postgres_data:
-  sonarqube_data:
-  sonarqube_logs:
-  sonarqube_extensions:
   prometheus_data:
   grafana_data:
 

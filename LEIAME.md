@@ -17,15 +17,12 @@ flowchart TD
             PROM["Prometheus\n:9090"]
             GRAF["Grafana\n:3000"]
             K6["K6\n(sob demanda)"]
-            SONAR["SonarQube\n:9000"]
-            PG["PostgreSQL\n(interno)"]
         end
     end
 
     PROM -- "scrape /actuator/prometheus\na cada 5s" --> APP
     K6 -- "HTTP requests\n(6 endpoints críticos)" --> APP
     GRAF -- "PromQL queries" --> PROM
-    SONAR -- "dados de análise" --> PG
 ```
 
 ---
@@ -50,8 +47,7 @@ infra/
     └── guides/
         ├── grafana.md               # Guia detalhado do Grafana
         ├── k6-load-testing.md       # Guia detalhado do K6
-        ├── prometheus-micrometer.md # Guia detalhado do Prometheus/Micrometer
-        └── sonarqube.md            # Guia detalhado do SonarQube
+        └── prometheus-micrometer.md # Guia detalhado do Prometheus/Micrometer
 ```
 
 ---
@@ -62,20 +58,12 @@ infra/
 |---|---|
 | Docker | `docker --version` |
 | Docker Compose v2 | `docker compose version` |
-| `vm.max_map_count ≥ 524288` | `sysctl vm.max_map_count` |
-
-```bash
-# Ajustar vm.max_map_count (exigido pelo Elasticsearch do SonarQube)
-sudo sysctl -w vm.max_map_count=524288
-# Para persistir entre reboots:
-echo "vm.max_map_count=524288" | sudo tee -a /etc/sysctl.conf
-```
 
 ---
 
 ## Comandos
 
-### Subir a stack completa
+### Subir a stack de observabilidade
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml up -d
@@ -112,10 +100,8 @@ docker compose -f infra/docker-compose.infra.yml \
 
 | Serviço | Porta | Credenciais | URL |
 |---|---|---|---|
-| SonarQube | 9000 | admin / admin (primeiro acesso) | http://localhost:9000 |
 | Prometheus | 9090 | — | http://localhost:9090 |
 | Grafana | 3000 | admin / admin | http://localhost:3000 |
-| PostgreSQL (SonarQube) | — (interno) | sonar / sonar | — |
 | K6 | — (sob demanda) | — | — |
 
 ---
@@ -181,7 +167,6 @@ Para informações aprofundadas sobre cada ferramenta, consulte os guias em `doc
 - [Grafana](docs/guides/grafana.md) — Provisionamento declarativo, dashboards, alertas
 - [K6 Load Testing](docs/guides/k6-load-testing.md) — Metodologia RED, stages, thresholds
 - [Prometheus + Micrometer](docs/guides/prometheus-micrometer.md) — Scrape, métricas, histogramas
-- [SonarQube](docs/guides/sonarqube.md) — Quality Gates, análise estática, código smells
 
 ---
 
@@ -189,7 +174,6 @@ Para informações aprofundadas sobre cada ferramenta, consulte os guias em `doc
 
 | Problema | Solução |
 |---|---|
-| SonarQube não inicia | Verificar `vm.max_map_count ≥ 524288` |
 | Prometheus não coleta métricas | Verificar se a aplicação está rodando na porta 9966 e se `/petclinic/actuator/prometheus` responde |
 | Grafana sem dados | Verificar se o Prometheus está UP em http://localhost:9090/targets |
 | K6 falha com connection refused | Verificar se a aplicação está rodando antes de executar o load test |
