@@ -205,9 +205,9 @@
       "title": "Lat\u00eancia p50/p95/p99 \u2014 POST /visits (Inser\u00e7\u00e3o filha)",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p50", "refId": "A" },
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p95", "refId": "B" },
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p99", "refId": "C" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}/pets/{petId}/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p50", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}/pets/{petId}/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p95", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket{job=\"spring-petclinic-rest\", uri=\"/api/owners/{ownerId}/pets/{petId}/visits\", method=\"POST\"}[1m])) by (le)) * 1000", "legendFormat": "p99", "refId": "C" }
       ]
     },
     {
