@@ -9,7 +9,7 @@ Este repositório contém a **stack de observabilidade Dockerizada** que compõe
 | **spring-petclinic-rest** | Aplicação sob teste | Código Java com anomalias estruturais, instrumentação `@Observed`, análise estática |
 | **infra** (este) | Stack de observabilidade | Prometheus, Grafana, K6 — coleta e visualização de métricas dinâmicas |
 
-A comunicação entre ambos é via rede: o Prometheus (Docker) faz scrape da aplicação (host, porta 9966), e o K6 (Docker) envia requisições HTTP para os endpoints da API.
+A comunicação entre ambos é via rede: o Prometheus (Docker) faz scrape da aplicação (host, porta 9966), e o K6 (`--network host`) envia requisições HTTP diretamente para os endpoints da API sem overhead de NAT.
 
 ---
 
@@ -26,12 +26,19 @@ flowchart TD
     subgraph DOCKER["Docker Compose (infra)"]
         PROM["Prometheus\n:9090\nTSDB"]
         GRAF["Grafana\n:3000\nDashboards"]
-        K6["K6\n(sob demanda)\nTeste de carga"]
+    end
+
+    subgraph BENCHMARK["Benchmark Runner"]
+        K6["K6\n--network host\nTeste de carga"]
+        SCRIPT["run-benchmark.sh\nOrquestração completa"]
     end
 
     PROM -- "scrape a cada 5s\n(metodo_execucao_seconds_*\n+ http_server_requests_*)" --> ACT
-    K6 -- "HTTP requests\n(7 endpoints críticos)" --> APP
+    K6 -- "HTTP requests direto\n(7 endpoints críticos)" --> APP
     GRAF -- "PromQL queries" --> PROM
+    SCRIPT -- "orquestra" --> PROM
+    SCRIPT -- "orquestra" --> K6
+    SCRIPT -- "inicia/para" --> APP
 ```
 
 ---
@@ -51,11 +58,16 @@ infra/
 │           ├── tcc-endpoints-k6.json    # Endpoints + @Observed
 │           └── tcc-jvm-spring-boot.json # Runtime JVM
 ├── k6/
-│   └── load-test.js                 # Script de carga (metodologia RED)
+│   └── load-test.js                 # Script de carga (metodologia RED + scenarios)
+├── scripts/
+│   ├── run-benchmark.sh             # Orquestração completa de benchmark
+│   └── extrair-metricas.sh          # Extração de métricas Prometheus
+├── results/                         # Logs e métricas de execuções (gitignored)
 └── docs/
     └── guides/
         ├── grafana.md               # Guia: visualização e interpretação
         ├── k6-load-testing.md       # Guia: metodologia e perfil de carga
+        ├── extrair-metricas.md      # Guia: extração de métricas Prometheus
         └── prometheus-micrometer.md # Guia: modelo de dados e PromQL
 ```
 
@@ -67,12 +79,47 @@ infra/
 |---|---|
 | Docker | `docker --version` |
 | Docker Compose v2 | `docker compose version` |
+| Java 17+ | `java --version` |
+| Maven (via wrapper) | `./mvnw --version` (no diretório spring-petclinic-rest) |
+| curl | `curl --version` |
 
 ---
 
-## Comandos
+## Execução de Benchmark (Modo Primário)
 
-### Subir a stack
+O `run-benchmark.sh` é o **método primário** de execução, garantindo reprodutibilidade total:
+
+```bash
+# Executar benchmark baseline
+bash infra/scripts/run-benchmark.sh baseline
+
+# Executar benchmark pós-refatoração
+bash infra/scripts/run-benchmark.sh pos-refatoracao
+```
+
+### O que o script faz (ciclo completo):
+
+| Etapa | Ação | Justificativa |
+|---|---|---|
+| **1/5** | `docker compose down -v` | Limpa volumes Prometheus (elimina stale data) |
+| **2/5** | `docker compose up -d` | Sobe Prometheus + Grafana com health-check |
+| **3/5** | `./mvnw spring-boot:run` | Inicia Spring Boot com H2 in-memory (banco fresco) |
+| **4/5** | `docker run --network host` K6 | Executa carga sem NAT overhead |
+| **5/5** | `extrair-metricas.sh` (se presente) | Coleta snapshot do Prometheus |
+
+### Saída:
+
+```
+infra/results/
+├── benchmark-baseline-20260616-143000.log
+└── metricas-baseline-20260616-143000.json
+```
+
+---
+
+## Comandos Manuais
+
+### Subir a stack (sem benchmark)
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml up -d
@@ -96,7 +143,15 @@ docker compose -f infra/docker-compose.infra.yml down
 docker compose -f infra/docker-compose.infra.yml down -v
 ```
 
-### Rodar testes de carga K6
+### Rodar K6 manualmente (--network host)
+
+```bash
+docker run --rm --network host \
+  -v $(pwd)/infra/k6:/scripts:ro \
+  grafana/k6:latest run /scripts/load-test.js
+```
+
+### Rodar K6 via compose (alternativa)
 
 ```bash
 docker compose -f infra/docker-compose.infra.yml \
@@ -140,15 +195,19 @@ O label `fase` segmenta os dados no Grafana entre coleta baseline e pós-refator
 
 ---
 
-## Script K6 — Perfil de Carga
+## Script K6 — Perfil de Carga (Scenarios)
 
-| Fase | Duração | VUs | Objetivo |
-|---|---|---|---|
-| Ramp-up | 30s | 0 → 30 | Aquecimento JIT |
-| Sustentada | 1min | 30 → 50 | Baseline de operação |
-| Spike | 30s | 50 → 100 | Transição abrupta |
-| Estresse | 1min | 100 | Degradação acumulativa |
-| Ramp-down | 30s | 100 → 0 | Recuperação |
+O K6 usa dois **cenários separados** com tags para isolamento de métricas:
+
+| Cenário | Fase | Duração | VUs | Tag | Incluído nos Thresholds |
+|---|---|---|---|---|---|
+| `warmup` | Ramp-up | 30s | 0 → 30 | `phase:warmup` | ❌ Excluído |
+| `steady_state` | Sustentada | 1min | 30 → 50 | `phase:test` | ✅ Incluído |
+| `steady_state` | Spike | 30s | 50 → 100 | `phase:test` | ✅ Incluído |
+| `steady_state` | Estresse | 1min | 100 | `phase:test` | ✅ Incluído |
+| `steady_state` | Ramp-down | 30s | 100 → 0 | `phase:test` | ✅ Incluído |
+
+> **Justificativa:** A separação em cenários com tags permite exclusão matemática dos dados de warm-up JIT dos thresholds via filtro `{phase:test}`. Com stages simples, o K6 não possui mecanismo para excluir dados de fases específicas do relatório final.
 
 ### Endpoints Exercitados
 
@@ -188,6 +247,7 @@ Métricas de runtime: heap, GC pause, threads ativas, CPU. Útil para correlacio
 | [Grafana](docs/guides/grafana.md) | Dashboard @Observed, interpretação de painéis, exportação de dados |
 | [K6 Load Testing](docs/guides/k6-load-testing.md) | Metodologia RED, perfil de carga, thresholds como fitness functions |
 | [Prometheus + Micrometer](docs/guides/prometheus-micrometer.md) | Modelo de dados, @Observed, queries PromQL |
+| [Extração de Métricas](docs/guides/extrair-metricas.md) | Script de extração de métricas Prometheus |
 
 ---
 
@@ -199,3 +259,5 @@ Métricas de runtime: heap, GC pause, threads ativas, CPU. Útil para correlacio
 | Grafana sem dados | Verificar Prometheus UP em http://localhost:9090/targets |
 | K6 "connection refused" | Verificar se a aplicação está rodando antes do load test |
 | @Observed sem dados | Fazer ao menos 1 requisição ao endpoint instrumentado (lazy registration) |
+| Porta 9966 em uso | `fuser -k 9966/tcp` para liberar a porta |
+| Benchmark inconsistente | Usar `run-benchmark.sh` para garantir ciclo completo de limpeza |

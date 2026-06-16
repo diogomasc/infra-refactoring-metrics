@@ -75,17 +75,17 @@ services:
   # Só sobe quando o profile testing é habilitado (não inicia com up -d).
   # Execute: docker compose -f infra/docker-compose.infra.yml \
   #            --profile testing run --rm k6 run /scripts/load-test.js
+  # ── K6 (testes de carga — sob demanda) ───────────────────────────────────────
+  # MODO PRIMÁRIO: via run-benchmark.sh (docker run --network host).
+  # Este serviço é mantido como alternativa para execução via compose.
+  # network_mode: host elimina NAT overhead nos percentis P95/P99.
   k6:
     image: grafana/k6:latest
     container_name: tcc-k6
     profiles: ["testing"]
+    network_mode: host
     volumes:
       - ./k6:/scripts:ro
-    networks:
-      - tcc-infra
-    extra_hosts:
-      # Permite que o K6 acesse o Spring Boot rodando no host
-      - "host.docker.internal:host-gateway"
 
 # ── Volumes persistentes ────────────────────────────────────────────────────
 # Mantêm dados entre reinícios do stack.

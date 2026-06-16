@@ -1,0 +1,4 @@
+# Resultados de benchmark — gerados por run-benchmark.sh
+# Não versionados para evitar poluição do repositório.
+*
+!.gitignore

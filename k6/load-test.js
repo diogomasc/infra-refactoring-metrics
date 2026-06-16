@@ -23,15 +23,18 @@
 //   - POST .../visits       → VisitFields {date, description}  (petId via path)
 //
 // Perfil de carga — NÃO ALTERAR entre fases baseline e pós-refatoração:
-//   Ramp-up: 0→30 VUs em 30s | Sustentada: 50 VUs por 1min
-//   Spike: 50→100 VUs em 30s | Estresse: 100 VUs por 1min
-//   Ramp-down: 100→0 em 30s  | Total: 3m30s | Peak: ~100 VUs concorrentes
+//   Cenário warmup:       0→30 VUs em 30s (dados EXCLUÍDOS dos thresholds)
+//   Cenário steady_state: 50 VUs 1min | 100 VUs spike 30s | 100 VUs 1min | ramp-down 30s
+//   Total: 3m30s | Peak: ~100 VUs concorrentes
 //
-// Execução:
+// Execução (modo primário — --network host, zero NAT overhead):
+//   bash infra/scripts/run-benchmark.sh [baseline|pos-refatoracao]
+//
+// Execução alternativa (via compose):
 //   docker compose -f infra/docker-compose.infra.yml \
 //     --profile testing run --rm k6 run /scripts/load-test.js
 //
-// ⚠️  NÃO altere stages, thresholds nem payloads entre as fases
+// ⚠️  NÃO altere scenarios, thresholds nem payloads entre as fases
 //     baseline e pós-refatoração — apenas o código Java muda.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -55,8 +58,10 @@ const petsCriados     = new Counter("pets_criados_com_sucesso");
 const visitsCriadas   = new Counter("visits_criadas_com_sucesso");
 
 // ── Configuração ─────────────────────────────────────────────────────────────
-const BASE_URL     = "http://host.docker.internal:9966/petclinic/api";
-const ACTUATOR_URL = "http://host.docker.internal:9966/petclinic/actuator";
+// __ENV permite override via: docker run -e BASE_URL=... ou k6 run -e BASE_URL=...
+// Fallback: localhost (para execução com --network host, modo primário)
+const BASE_URL     = __ENV.BASE_URL     || "http://localhost:9966/petclinic/api";
+const ACTUATOR_URL = __ENV.ACTUATOR_URL || "http://localhost:9966/petclinic/actuator";
 
 const HEADERS = {
   headers: {
@@ -80,24 +85,55 @@ const PET_TYPES = [
   { id: 6, name: "hamster" },
 ];
 
-// ── Perfil de carga ──────────────────────────────────────────────────────────
+// ── Perfil de carga (scenarios) ──────────────────────────────────────────────
+// Dois cenários separados com tags de fase para isolamento de métricas:
+//   - warmup:       dados com tag {phase:warmup}, EXCLUÍDOS dos thresholds
+//   - steady_state: dados com tag {phase:test}, INCLUÍDOS nos thresholds
+//
+// A separação em cenários permite exclusão matemática do warm-up JIT do
+// resultado final — impossível com stages simples (K6 não permite excluir
+// dados de stages específicos do relatório).
 export const options = {
-  stages: [
-    { duration: "30s", target: 30 },  // ramp-up gradual
-    { duration: "1m",  target: 50 },  // carga sustentada
-    { duration: "30s", target: 100 }, // spike até 100 VUs
-    { duration: "1m",  target: 100 }, // estresse máximo sustentado
-    { duration: "30s", target: 0 },   // ramp-down
-  ],
+  scenarios: {
+    // ── Warm-up: JIT compilation + connection pool init ──────────────────
+    // Dados gerados aqui NÃO entram nos thresholds (tag: phase=warmup).
+    warmup: {
+      executor: 'ramping-vus',
+      startVUs: 0,
+      stages: [
+        { duration: '30s', target: 30 },
+      ],
+      gracefulRampDown: '5s',
+      tags: { phase: 'warmup' },
+    },
+    // ── Teste principal: métricas válidas para comparação ────────────────
+    // startTime: '30s' garante que inicia após o warmup.
+    // Dados gerados aqui são os únicos avaliados pelos thresholds.
+    steady_state: {
+      executor: 'ramping-vus',
+      startVUs: 30,
+      startTime: '30s',
+      stages: [
+        { duration: '1m',  target: 50 },   // carga sustentada
+        { duration: '30s', target: 100 },  // spike até 100 VUs
+        { duration: '1m',  target: 100 },  // estresse máximo sustentado
+        { duration: '30s', target: 0 },    // ramp-down
+      ],
+      gracefulRampDown: '10s',
+      tags: { phase: 'test' },
+    },
+  },
   thresholds: {
-    http_req_duration:        ["p(95)<5000"],
-    taxa_erro:                ["rate<0.10"],
-    latencia_listar_owners:   ["p(95)<4000"],
-    latencia_criar_owner:     ["p(95)<3000"],
-    latencia_consultar_owner: ["p(95)<3000"],
-    latencia_criar_pet:       ["p(95)<3000"],
-    latencia_criar_visit:     ["p(95)<3000"],
-    latencia_listar_vets:     ["p(95)<2000"],
+    // ── Thresholds filtrados por {phase:test} ────────────────────────────
+    // Exclui matematicamente os dados do warm-up (phase=warmup).
+    'http_req_duration{phase:test}':        ['p(95)<5000'],
+    'taxa_erro{phase:test}':                ['rate<0.10'],
+    'latencia_listar_owners{phase:test}':   ['p(95)<4000'],
+    'latencia_criar_owner{phase:test}':     ['p(95)<3000'],
+    'latencia_consultar_owner{phase:test}': ['p(95)<3000'],
+    'latencia_criar_pet{phase:test}':       ['p(95)<3000'],
+    'latencia_criar_visit{phase:test}':     ['p(95)<3000'],
+    'latencia_listar_vets{phase:test}':     ['p(95)<2000'],
   },
 };
 

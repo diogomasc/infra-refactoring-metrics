@@ -8,10 +8,10 @@ A distinção entre as duas abordagens é fundamental para o TCC:
 
 | Perspectiva | Ferramenta | O que mede | Onde reside |
 |---|---|---|---|
-| **Cliente** | K6 | Tempo ponta a ponta (inclui rede + serialização HTTP) | Container Docker |
+| **Cliente** | K6 | Tempo ponta a ponta (inclui rede + serialização HTTP) | `--network host` (direto no host) |
 | **Servidor** | Micrometer (`@Observed`) | Tempo de processamento por camada (Controller, Service) | Dentro da JVM |
 
-Em ambiente controlado (loopback Docker), a diferença entre as medições é negligenciável — mas a complementaridade é rica: o K6 fornece a visão do "usuário" enquanto `@Observed` fornece a visão do "engenheiro". A correlação entre ambas valida que a degradação medida no servidor se manifesta na experiência do cliente.
+Em execução com `--network host`, a latência de rede entre K6 e a aplicação é eliminada — o tráfego ocorre via loopback (`localhost`), sem traversar a camada NAT do Docker bridge. Isso garante que os percentis P95/P99 meçam exclusivamente o tempo de processamento da aplicação.
 
 ---
 
@@ -57,35 +57,39 @@ O script implementa a **metodologia RED** (Rate, Errors, Duration) proposta por 
 
 ---
 
-## Perfil de Carga
+## Perfil de Carga (Scenarios)
 
-O perfil escalonado exercita a aplicação em diferentes níveis de concorrência, revelando comportamentos não-lineares causados por débito técnico:
+O K6 utiliza dois **cenários separados** (`warmup` e `steady_state`) com tags de fase para isolamento de métricas. Isso permite exclusão matemática dos dados de warm-up JIT do relatório final — impossível com `stages` simples.
 
 ```mermaid
 gantt
-    title Perfil de Carga K6 — 3min30s total
+    title Perfil de Carga K6 — 3min30s total (2 cenários)
     dateFormat ss
     axisFormat %S
 
-    section Fases
+    section warmup (phase=warmup)
     Ramp-up 0→30 VUs       :a1, 00, 30s
-    Sustentada 50 VUs       :a2, after a1, 60s
+
+    section steady_state (phase=test)
+    Sustentada 50 VUs       :a2, 30, 60s
     Spike 50→100 VUs        :a3, after a2, 30s
     Estresse 100 VUs        :a4, after a3, 60s
     Ramp-down 100→0         :a5, after a4, 30s
 ```
 
-| Fase | Duração | VUs | Objetivo Experimental |
-|---|---|---|---|
-| **Ramp-up** | 30s | 0 → 30 | Aquecimento JIT da JVM. Resultados descartáveis. |
-| **Sustentada** | 1min | 30 → 50 | Carga moderada — baseline de operação normal |
-| **Spike** | 30s | 50 → 100 | Transição abrupta — revela N+1 e contenção de locks |
-| **Estresse** | 1min | 100 | Carga máxima sustentada — evidencia degradação acumulativa |
-| **Ramp-down** | 30s | 100 → 0 | Recuperação — verifica liberação de recursos |
+| Cenário | Fase | Duração | VUs | Tag | Nos Thresholds |
+|---|---|---|---|---|---|
+| `warmup` | Ramp-up | 30s | 0 → 30 | `phase:warmup` | ❌ Excluído |
+| `steady_state` | Sustentada | 1min | 30 → 50 | `phase:test` | ✅ Incluído |
+| `steady_state` | Spike | 30s | 50 → 100 | `phase:test` | ✅ Incluído |
+| `steady_state` | Estresse | 1min | 100 | `phase:test` | ✅ Incluído |
+| `steady_state` | Ramp-down | 30s | 100 → 0 | `phase:test` | ✅ Incluído |
+
+> **Justificativa do isolamento:** O K6 não possui funcionalidade nativa para excluir dados de stages específicos do relatório final. A abordagem com `scenarios` e `tags` permite filtrar métricas por `{phase:test}` nos thresholds, garantindo que apenas os dados da fase de teste efetiva sejam avaliados.
 
 > **Justificativa do spike:** Fowler (2018) observa que code smells frequentemente são "invisíveis sob carga baixa e catastróficos sob carga alta". O spike de 50→100 VUs é desenhado para provocar essa transição — se `GET /owners` com EAGER N+1 escala linearmente até 50 VUs mas quadraticamente além, o spike torna isso visível.
 
-> **Princípio de comparabilidade:** para que a comparação baseline × pós-refatoração seja metodologicamente válida, **nenhum parâmetro** do script (stages, thresholds, payloads) pode ser alterado entre as fases. Apenas o código Java muda. Isso isola a variável independente (refatoração) da variável dependente (latência).
+> **Princípio de comparabilidade:** para que a comparação baseline × pós-refatoração seja metodologicamente válida, **nenhum parâmetro** do script (scenarios, thresholds, payloads) pode ser alterado entre as fases. Apenas o código Java muda. Isso isola a variável independente (refatoração) da variável dependente (latência).
 
 ---
 
@@ -95,17 +99,18 @@ Os thresholds do K6 funcionam como *fitness functions automatizadas* (Ford, Pars
 
 ```javascript
 thresholds: {
-    http_req_duration:        ['p(95)<5000'],    // SLO global
-    taxa_erro:                ['rate<0.10'],      // < 10% de erros
-    latencia_listar_owners:   ['p(95)<4000'],    // N+1 EAGER
-    latencia_criar_owner:     ['p(95)<3000'],    // write-path
-    latencia_consultar_owner: ['p(95)<3000'],    // grafo denso
-    latencia_criar_pet:       ['p(95)<3000'],    // cascata JPA
-    latencia_criar_visit:     ['p(95)<3000'],    // inserção filha
-    latencia_listar_vets:     ['p(95)<2000'],    // N:M EAGER
-    latencia_health:          ['p(95)<500'],     // baseline framework
+    'http_req_duration{phase:test}':        ['p(95)<5000'],    // SLO global
+    'taxa_erro{phase:test}':                ['rate<0.10'],      // < 10% de erros
+    'latencia_listar_owners{phase:test}':   ['p(95)<4000'],    // N+1 EAGER
+    'latencia_criar_owner{phase:test}':     ['p(95)<3000'],    // write-path
+    'latencia_consultar_owner{phase:test}': ['p(95)<3000'],    // grafo denso
+    'latencia_criar_pet{phase:test}':       ['p(95)<3000'],    // cascata JPA
+    'latencia_criar_visit{phase:test}':     ['p(95)<3000'],    // inserção filha
+    'latencia_listar_vets{phase:test}':     ['p(95)<2000'],    // N:M EAGER
 }
 ```
+
+> **Filtro `{phase:test}`:** Garante que apenas dados do cenário `steady_state` (tag `phase:test`) são avaliados. Os dados do cenário `warmup` (tag `phase:warmup`) são coletados mas matematicamente excluídos dos thresholds.
 
 O K6 retorna exit code 99 quando um threshold é violado. No contexto do TCC:
 - **Violação no baseline:** confirma que o débito técnico causa degradação mensurável
@@ -129,9 +134,48 @@ O K6 retorna exit code 99 quando um threshold é violado. No contexto do TCC:
 
 ---
 
+## Execução
+
+### Método Primário: `run-benchmark.sh`
+
+O script orquestra o ciclo completo (limpeza → infra → app → K6 → coleta):
+
+```bash
+# Benchmark baseline (pré-refatoração)
+bash infra/scripts/run-benchmark.sh baseline
+
+# Benchmark pós-refatoração
+bash infra/scripts/run-benchmark.sh pos-refatoracao
+```
+
+### Método Manual: Docker `--network host`
+
+```bash
+# Garantir que Spring Boot está rodando em localhost:9966
+docker run --rm --network host \
+  -v $(pwd)/infra/k6:/scripts:ro \
+  grafana/k6:latest run /scripts/load-test.js
+```
+
+### Método Alternativo: Via Compose
+
+```bash
+docker compose -f infra/docker-compose.infra.yml \
+  --profile testing run --rm k6 run /scripts/load-test.js
+```
+
+---
+
 ## Interpretação dos Resultados
 
 ### Saída do Terminal
+
+O K6 exibe métricas separadas por cenário:
+
+```
+█ SCENARIO: warmup        ← Dados de aquecimento (ignorar)
+█ SCENARIO: steady_state  ← Dados válidos para análise
+```
 
 ```
 http_req_duration........: avg=1.2s  min=42ms  med=890ms  max=4.1s  p(90)=2.8s  p(95)=3.4s
@@ -150,18 +194,11 @@ http_req_duration........: avg=1.2s  min=42ms  med=890ms  max=4.1s  p(90)=2.8s  
 
 Para garantir validade metodológica:
 
-1. Verificar que a aplicação está estabilizada (uptime > 60s, JVM aquecida)
-2. Executar o teste com saída persistida
-3. Capturar screenshot do dashboard Grafana ao final
-4. Exportar CSV dos painéis de latência
-5. Registrar timestamps de início e fim
-6. Salvar artefatos em `docs/results/baseline/` ou `docs/results/pos-refatoracao/`
-
-```bash
-docker compose -f infra/docker-compose.infra.yml \
-  --profile testing run --rm k6 run /scripts/load-test.js \
-  2>&1 | tee docs/results/baseline/k6-summary-$(date +%Y%m%dT%H%M).txt
-```
+1. Executar `run-benchmark.sh` (garante ciclo completo automaticamente)
+2. Capturar screenshot do dashboard Grafana ao final
+3. Exportar CSV dos painéis de latência
+4. Registrar timestamps de início e fim (incluídos no log automaticamente)
+5. Salvar artefatos em `infra/results/`
 
 ---
 
