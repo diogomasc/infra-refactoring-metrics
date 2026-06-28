@@ -12,7 +12,6 @@
 #     --profile testing run --rm k6 run /scripts/load-test.js
 
 services:
-
   # ── Prometheus ──────────────────────────────────────────────────────────────
   # Coleta métricas Micrometer do Spring Boot via /actuator/prometheus.
   # host.docker.internal aponta para a aplicação rodando no host (porta 8080).
@@ -27,9 +26,7 @@ services:
       - prometheus_data:/prometheus
     networks:
       - tcc-infra
-    extra_hosts:
-      # Permite que o Prometheus alcance o Spring Boot rodando no host
-      - "host.docker.internal:host-gateway"
+      - tcc-api-net
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
@@ -98,3 +95,6 @@ volumes:
 networks:
   tcc-infra:
     driver: bridge
+  tcc-api-net:
+    external: true
+    name: tcc-api-net
