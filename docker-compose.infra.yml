@@ -2,17 +2,16 @@
 # Componentes: Prometheus, Grafana e K6
 #
 # Execute a partir da raiz do projeto:
-#   docker compose -f infra/docker-compose.infra.yml up -d
+#   docker compose -f docker-compose.infra.yml up -d
 #
 # Para derrubar:
-#   docker compose -f infra/docker-compose.infra.yml down
+#   docker compose -f docker-compose.infra.yml down -v
 #
 # Para rodar os testes de carga (K6):
-#   docker compose -f infra/docker-compose.infra.yml \
-#     --profile testing run --rm k6 run /scripts/load-test.js
+#   docker compose -f docker-compose.infra.yml --profile testing run --rm k6 run /scripts/load-test.js
 
 services:
-  # ── Prometheus ──────────────────────────────────────────────────────────────
+  # ── Prometheus ─────────────────────────────────────────────────────────────
   # Coleta métricas Micrometer do Spring Boot via /actuator/prometheus.
   # host.docker.internal aponta para a aplicação rodando no host (porta 8080).
   prometheus:
@@ -39,8 +38,8 @@ services:
         reservations:
           memory: 128M
 
-  # ── Grafana ─────────────────────────────────────────────────────────────────
-  # Dashboards de runtime: latência p50/p95/p99, throughput, taxa de erro.
+  # ── Grafana ────────────────────────────────────────────────────────────────
+  # Dashboards de runtime: latência p50/p95/p99, throughput e taxa de erro.
   # Datasource Prometheus pré-provisionado automaticamente.
   grafana:
     image: grafana/grafana:latest
@@ -59,8 +58,10 @@ services:
       - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     networks:
       - tcc-infra
+      - tcc-api-net
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
     deploy:
       resources:
         limits:
@@ -70,31 +71,27 @@ services:
 
   # ── K6 (testes de carga — sob demanda) ─────────────────────────────────────
   # Só sobe quando o profile testing é habilitado (não inicia com up -d).
-  # Execute: docker compose -f infra/docker-compose.infra.yml \
-  #            --profile testing run --rm k6 run /scripts/load-test.js
-  # ── K6 (testes de carga — sob demanda) ───────────────────────────────────────
   # MODO PRIMÁRIO: via run-benchmark.sh (docker run --network host).
-  # Este serviço é mantido como alternativa para execução via compose.
   # network_mode: host elimina NAT overhead nos percentis P95/P99.
   k6:
     image: grafana/k6:latest
     container_name: tcc-k6
-    profiles: ["testing"]
+    profiles:
+      - testing
     network_mode: host
     volumes:
       - ./k6:/scripts:ro
 
-# ── Volumes persistentes ────────────────────────────────────────────────────
-# Mantêm dados entre reinícios do stack.
+# ── Volumes persistentes ─────────────────────────────────────────────────────
 volumes:
   prometheus_data:
   grafana_data:
 
-# ── Rede isolada ────────────────────────────────────────────────────────────
-# Evita colisão com outras redes Docker no host.
+# ── Redes ────────────────────────────────────────────────────────────────────
 networks:
   tcc-infra:
     driver: bridge
+
   tcc-api-net:
     external: true
     name: tcc-api-net
