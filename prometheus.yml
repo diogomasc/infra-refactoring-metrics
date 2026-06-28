@@ -1,20 +1,20 @@
-# --- Configuração do Prometheus ---
-# Coleta métricas do protótipo Spring Boot via Micrometer.
+# ── Configuração do Prometheus ─────────────────────────────────────
+# Coleta métricas do Spring Boot expostas via Micrometer.
 #
 # Pré-requisitos no application.properties:
 #   management.endpoints.web.exposure.include=health,prometheus,metrics
 #   management.endpoint.prometheus.enabled=true
 #
-# O target abaixo usa o nome do serviço exposto na rede Docker compartilhada
-# com a API (tcc-api-net), evitando dependência de host.docker.internal.
+# A API é acessada pelo nome de serviço 'petclinic-api' na rede Docker
+# compartilhada tcc-api-net.
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
 scrape_configs:
-  # ── Spring PetClinic REST ────────────────────────────────────────────────────
-  # Porta 9966, context-path /petclinic/
+  # API principal do TCC.
+  # O endpoint /petclinic/actuator/prometheus expõe métricas da aplicação.
   - job_name: "spring-petclinic-rest"
     metrics_path: "/petclinic/actuator/prometheus"
     scrape_interval: 5s
@@ -22,11 +22,10 @@ scrape_configs:
       - targets: ["petclinic-api:9966"]
         labels:
           app: "spring-petclinic-rest"
-          fase: "baseline"
-          # ↑ Alterar para "pos-refatoracao" ao iniciar a Fase 3 (comparação)
+          fase: "baseline" # Trocar para "pos-refatoracao" na fase comparativa
 
-  # ── Auto-monitoramento do Prometheus ──────────────────────────────────────
-  # Mantém o próprio Prometheus visível no Grafana.
+  # Auto-monitoramento do Prometheus.
+  # Útil para visualizar a saúde do próprio coletor no Grafana.
   - job_name: "prometheus"
     static_configs:
       - targets: ["localhost:9090"]
