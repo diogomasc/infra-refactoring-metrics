@@ -2,20 +2,24 @@
 // Script de Carga — TCC: Métricas de Refatoração (Spring PetClinic REST)
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Exercita os 7 endpoints críticos definidos na análise de dívida técnica,
-// selecionados por apresentarem os maiores riscos de degradação dinâmica
-// correlacionáveis com anomalias estáticas (N+1, EAGER cascata, CascadeType,
-// relação N:M, write-path completo).
-//
-// Endpoints exercitados (contratos verificados contra openapi.yml):
-//   1. GET  /api/owners                        → N+1 via EAGER (Owner→Pet→Visit)
-//   2. POST /api/owners                        → Write-path completo (201)
-//   3. GET  /api/owners/{ownerId}              → Consulta com grafo profundo (200)
-//   4. POST /api/owners/{ownerId}/pets         → Cascata JPA (PetFields, 201)
+// Exercita 6 endpoints críticos + 1 baseline de infraestrutura, cobrindo
+// 13 anotações @Observed que geram spans Prometheus para as fitness functions.
+// Endpoints e suas cadeias de observabilidade:
+//   1. GET  /api/owners              → Controller_Owner_ListAll + Service_Owner_FindAll
+//   2. POST /api/owners              → Controller_Owner_Add + Service_Owner_Save
+//   3. GET  /api/owners/{ownerId}    → Controller_Owner_FindById + Service_Owner_FindById
+//   4. POST /api/owners/{ownerId}/pets
+//                                   → Controller_Pet_AddToOwner + Service_Owner_FindById
+//                                     + Service_PetType_FindById + Service_Pet_Save
 //   5. POST /api/owners/{ownerId}/pets/{petId}/visits
-//                                             → Inserção em tabela filha (VisitFields, 201)
-//   6. GET  /api/vets                          → Relação N:M EAGER (200)
-//   7. GET  /actuator/health                   → Baseline de latência do framework
+//                                   → Controller_Visit_AddToOwner + Service_Visit_Save
+//   6. GET  /api/vets               → Controller_Vet_ListAll + Service_Vet_FindAll
+//   7. GET  /actuator/health        → Baseline de latência do framework (sem @Observed)
+//
+// Métricas exportadas por endpoint (metodologia RED expandida):
+//   - Trend p99: alimenta LatencyFitnessFunction (threshold conservador)
+//   - Rate erro: alimenta ReliabilityFitnessFunction por endpoint
+//   - Counter:   throughput de escritas bem-sucedidas
 //
 // Payload verificado contra openapi.yml:
 //   - POST /owners          → OwnerFields {firstName, lastName, address, city, telephone}
@@ -47,19 +51,32 @@ import { check, group, sleep } from "k6";
 import { Trend, Rate, Counter } from "k6/metrics";
 import faker from "k6/x/faker";
 
-// ── Métricas customizadas (metodologia RED) ──────────────────────────────────
-const latenciaListarOwners = new Trend("latencia_listar_owners", true);
-const latenciaCriarOwner = new Trend("latencia_criar_owner", true);
-const latenciaConsultarOwner = new Trend("latencia_consultar_owner", true);
-const latenciaCriarPet = new Trend("latencia_criar_pet", true);
-const latenciaCriarVisit = new Trend("latencia_criar_visit", true);
-const latenciaListarVets = new Trend("latencia_listar_vets", true);
-const latenciaHealth = new Trend("latencia_health", true);
+// ── Métricas customizadas (metodologia RED expandida) ───────────────────────
+// Trends com true = habilita percentis (p50, p90, p95, p99) no relatório k6.
+// p99 alimenta LatencyFitnessFunction; p95 mantido para comparação histórica.
+const latenciaListarOwners    = new Trend("latencia_listar_owners", true);
+const latenciaCriarOwner      = new Trend("latencia_criar_owner", true);
+const latenciaConsultarOwner  = new Trend("latencia_consultar_owner", true);
+const latenciaCriarPet        = new Trend("latencia_criar_pet", true);
+const latenciaCriarVisit      = new Trend("latencia_criar_visit", true);
+const latenciaListarVets      = new Trend("latencia_listar_vets", true);
+const latenciaHealth          = new Trend("latencia_health", true);
 
+// Taxa de erro GLOBAL (usado por ReliabilityFitnessFunction com errorRatePercent)
 const taxaErroGlobal = new Rate("taxa_erro");
-const ownersCriados = new Counter("owners_criados_com_sucesso");
-const petsCriados = new Counter("pets_criados_com_sucesso");
-const visitsCriadas = new Counter("visits_criadas_com_sucesso");
+
+// Taxa de erro POR ENDPOINT — permite isolar qual endpoint degrada primeiro
+const erroListarOwners   = new Rate("erro_listar_owners");
+const erroCriarOwner     = new Rate("erro_criar_owner");
+const erroConsultarOwner = new Rate("erro_consultar_owner");
+const erroCriarPet       = new Rate("erro_criar_pet");
+const erroCriarVisit     = new Rate("erro_criar_visit");
+const erroListarVets     = new Rate("erro_listar_vets");
+
+// Counters de escritas bem-sucedidas (throughput útil)
+const ownersCriados  = new Counter("owners_criados_com_sucesso");
+const petsCriados    = new Counter("pets_criados_com_sucesso");
+const visitsCriadas  = new Counter("visits_criadas_com_sucesso");
 
 // ── Configuração ─────────────────────────────────────────────────────────────
 // __ENV permite override via: docker run -e BASE_URL=... ou k6 run -e BASE_URL=...
@@ -155,14 +172,36 @@ export const options = {
     },
   },
   thresholds: {
+    // Threshold de segurança global (não alterar entre fases)
     http_req_duration: ["p(95)<5000"],
     taxa_erro: ["rate<0.10"],
-    latencia_listar_owners: ["p(95)<4000"],
-    latencia_criar_owner: ["p(95)<3000"],
+
+    // Thresholds p95 por endpoint (baseline histórico — não alterar)
+    latencia_listar_owners:   ["p(95)<4000"],
+    latencia_criar_owner:     ["p(95)<3000"],
     latencia_consultar_owner: ["p(95)<3000"],
-    latencia_criar_pet: ["p(95)<3000"],
-    latencia_criar_visit: ["p(95)<3000"],
-    latencia_listar_vets: ["p(95)<2000"],
+    latencia_criar_pet:       ["p(95)<3000"],
+    latencia_criar_visit:     ["p(95)<3000"],
+    latencia_listar_vets:     ["p(95)<2000"],
+
+    // Thresholds p99 por endpoint → alimentam LatencyFitnessFunction
+    // EXCELLENT ≤ 200ms | GOOD ≤ 300ms | POOR ≤ 500ms | UNACCEPTABLE > 500ms
+    // Os valores abaixo são o threshold de aceitação mínima do TCC (POOR = 500ms).
+    // A classificação exata (EXCELLENT/GOOD/POOR) é feita pelas fitness functions.
+    latencia_listar_owners:   ["p(99)<5000"],
+    latencia_criar_owner:     ["p(99)<4000"],
+    latencia_consultar_owner: ["p(99)<4000"],
+    latencia_criar_pet:       ["p(99)<4000"],
+    latencia_criar_visit:     ["p(99)<4000"],
+    latencia_listar_vets:     ["p(99)<3000"],
+
+    // Taxa de erro por endpoint → alimentam ReliabilityFitnessFunction
+    erro_listar_owners:   ["rate<0.10"],
+    erro_criar_owner:     ["rate<0.10"],
+    erro_consultar_owner: ["rate<0.10"],
+    erro_criar_pet:       ["rate<0.10"],
+    erro_criar_visit:     ["rate<0.10"],
+    erro_listar_vets:     ["rate<0.10"],
   },
 };
 
@@ -190,10 +229,9 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 1. GET /owners — Listar todos os donos
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: Owner carrega Set<Pet> com FetchType.EAGER, que por sua vez
-  // carrega Set<Visit> EAGER. Com 50+ owners e 75+ pets no seed, esta query
-  // dispara cascata de N+1 proporcional ao volume — é onde o código sujo
-  // mais se distinguirá do código limpo sob carga.
+  // @Observed cobertos: Controller_Owner_ListAll → Service_Owner_FindAll (2 spans)
+  // CRÍTICO: Owner carrega Set<Pet> EAGER → Set<Visit> EAGER. Dispara N+1
+  // proporcional ao volume — endpoint com maior potencial de degradação.
   // Resposta: HTTP 200, array de Owner.
   // ═══════════════════════════════════════════════════════════════════════════
   group("GET /owners", function () {
@@ -207,6 +245,7 @@ export default function loadTestScenario(data) {
         Array.isArray(parseJson(r.body)) && parseJson(r.body).length > 0,
     });
     taxaErroGlobal.add(!ok);
+    erroListarOwners.add(!ok);
   });
 
   sleep(0.2);
@@ -214,10 +253,9 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 2. POST /owners — Criar dono
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: write-path completo — validação Bean Validation (@NotEmpty,
-  // @Pattern, @Digits) → MapStruct → JPA persist → flush.
-  // Schema: OwnerFields {firstName, lastName, address, city, telephone}
-  // Padrão telephone: '^[0-9]*$' (validado no servidor).
+  // @Observed cobertos: Controller_Owner_Add → Service_Owner_Save (2 spans)
+  // CRÍTICO: write-path completo (Bean Validation → MapStruct → JPA flush).
+  // Sensível à saturação do pool de conexões sob pico de VUs concorrentes.
   // Resposta: HTTP 201 com Owner completo incluindo id gerado.
   // ═══════════════════════════════════════════════════════════════════════════
   group("POST /owners", function () {
@@ -251,6 +289,7 @@ export default function loadTestScenario(data) {
       },
     });
     taxaErroGlobal.add(!ok);
+    erroCriarOwner.add(!ok);
 
     if (ok) {
       ownersCriados.add(1);
@@ -264,9 +303,8 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 3. GET /owners/{ownerId} — Consultar dono por ID
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: retorna Owner + [] pets aninhados + [] visits de cada pet.
-  // Com owner recém-criado ou do seed (que tem pets com visits), avalia
-  // o grafo completo. Potencial N+1 se não usar JOIN FETCH.
+  // @Observed cobertos: Controller_Owner_FindById → Service_Owner_FindById (2 spans)
+  // CRÍTICO: grafo completo Owner + pets + visits — potencial N+1 sem JOIN FETCH.
   // Resposta: HTTP 200 com Owner completo.
   // ═══════════════════════════════════════════════════════════════════════════
   group("GET /owners/{ownerId}", function () {
@@ -282,6 +320,7 @@ export default function loadTestScenario(data) {
       },
     });
     taxaErroGlobal.add(!ok);
+    erroConsultarOwner.add(!ok);
   });
 
   sleep(0.2);
@@ -289,10 +328,9 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 4. POST /owners/{ownerId}/pets — Adicionar pet a um dono
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: CascadeType.ALL no Pet.type pode causar side-effects inesperados.
-  // savePet() faz lookup de PetType antes de salvar. PetAgeValidation verifica
-  // birthDate.
-  // Schema: PetFields {name, birthDate, type: {id, name}} (type é PetType completo)
+  // @Observed cobertos: Controller_Pet_AddToOwner → Service_Owner_FindById
+  //                     → Service_PetType_FindById → Service_Pet_Save (4 spans)
+  // CRÍTICO: cadeia mais profunda — CascadeType.ALL + lookup duplo de FK.
   // Resposta: HTTP 201 com Pet completo incluindo id e ownerId.
   // ═══════════════════════════════════════════════════════════════════════════
   group("POST /owners/{ownerId}/pets", function () {
@@ -332,6 +370,7 @@ export default function loadTestScenario(data) {
       },
     });
     taxaErroGlobal.add(!ok);
+    erroCriarPet.add(!ok);
 
     if (ok) {
       petsCriados.add(1);
@@ -345,10 +384,9 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 5. POST /owners/{ownerId}/pets/{petId}/visits — Criar visita
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: inserção em tabela filha. O endpoint canônico do PetClinic REST
-  // para criar visitas é POST /owners/{ownerId}/pets/{petId}/visits (não
-  // POST /visits). Requer lookup do pet e do owner via path.
-  // Schema: VisitFields {date, description} (required: description)
+  // @Observed cobertos: Controller_Visit_AddToOwner → Service_Visit_Save (2 spans)
+  // CRÍTICO: inserção em tabela filha — impacto de lock proporcional ao volume.
+  // Endpoint canônico (não POST /visits — anotação órfã removida).
   // Resposta: HTTP 201 com Visit completo incluindo id e petId.
   // ═══════════════════════════════════════════════════════════════════════════
   group("POST /owners/{ownerId}/pets/{petId}/visits", function () {
@@ -386,6 +424,7 @@ export default function loadTestScenario(data) {
       },
     });
     taxaErroGlobal.add(!ok);
+    erroCriarVisit.add(!ok);
 
     if (ok) visitsCriadas.add(1);
   });
@@ -395,9 +434,9 @@ export default function loadTestScenario(data) {
   // ═══════════════════════════════════════════════════════════════════════════
   // 6. GET /vets — Listar veterinários
   // ─────────────────────────────────────────────────────────────────────────
-  // CRÍTICO: Vet → Specialty via @ManyToMany EAGER + tabela de junção
-  // vet_specialties. Com 15 vets no seed (vs 6 originais), o grafo de objetos
-  // é mais denso — amplifica memory pressure e evidencia impacto da N:M.
+  // @Observed cobertos: Controller_Vet_ListAll → Service_Vet_FindAll (2 spans)
+  // CRÍTICO: Vet → Specialty via @ManyToMany EAGER (vet_specialties).
+  // Amplifica memory pressure e evidencia impacto da relação N:M sob carga.
   // Resposta: HTTP 200, array de Vet.
   // ═══════════════════════════════════════════════════════════════════════════
   group("GET /vets", function () {
@@ -408,6 +447,7 @@ export default function loadTestScenario(data) {
       "listar-vets: status 200": (r) => r.status === 200,
     });
     taxaErroGlobal.add(!ok);
+    erroListarVets.add(!ok);
   });
 
   sleep(0.2);
