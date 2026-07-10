@@ -52,7 +52,7 @@
         "y": 0
       },
       "id": 200,
-      "title": "📊 Visão Geral da JVM",
+      "title": "Visão Geral da JVM",
       "type": "row"
     },
     {
@@ -81,7 +81,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 8,
         "x": 0,
         "y": 1
       },
@@ -92,7 +92,7 @@
             "lastNotNull"
           ]
         },
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none"
       },
       "title": "Uptime",
@@ -143,8 +143,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 8,
+        "x": 8,
         "y": 1
       },
       "id": 202,
@@ -154,7 +154,7 @@
             "lastNotNull"
           ]
         },
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "area"
       },
       "title": "Heap Usado (MB)",
@@ -174,9 +174,9 @@
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 200 }] }, "unit": "short", "mappings": [] }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
       "id": 203,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "title": "Threads Ativas",
       "type": "stat",
       "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "jvm_threads_live_threads{job=\"spring-petclinic-rest\"}", "legendFormat": "threads_live", "refId": "A" }]
@@ -217,9 +217,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 1
+        "w": 8,
+        "x": 0,
+        "y": 5
       },
       "id": 204,
       "options": {
@@ -249,9 +249,9 @@
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 2 }] }, "unit": "ops", "mappings": [] }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 5 },
       "id": 205,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
       "title": "GC — Pauses (ops/s)",
       "type": "stat",
       "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(jvm_gc_pause_seconds_count{job=\"spring-petclinic-rest\"}[1m]))", "legendFormat": "gc_ops", "refId": "A" }]
@@ -259,9 +259,9 @@
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 13 }] }, "unit": "short", "mappings": [] }, "overrides": [] },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
       "id": 206,
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "title": "M\u00e9todos @Observed",
       "type": "stat",
       "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "count(count by (method) (metodo_execucao_seconds_count{job=\"spring-petclinic-rest\"}))", "legendFormat": "cobertura", "refId": "A" }]
@@ -272,10 +272,10 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "id": 210,
-      "title": "🧠 Memória JVM",
+      "title": "Memória JVM",
       "type": "row"
     },
     {
@@ -290,8 +290,8 @@
           },
           "unit": "decmbytes",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 15
+            "lineWidth": 1,
+            "fillOpacity": 0
           }
         },
         "overrides": []
@@ -300,7 +300,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 10
       },
       "id": 211,
       "options": {
@@ -308,9 +308,10 @@
           "displayMode": "table",
           "placement": "bottom",
           "calcs": [
+            "lastNotNull",
+            "min",
             "mean",
-            "max",
-            "lastNotNull"
+            "max"
           ]
         },
         "tooltip": {
@@ -361,8 +362,8 @@
           },
           "unit": "decmbytes",
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 15
+            "lineWidth": 1,
+            "fillOpacity": 0
           }
         },
         "overrides": []
@@ -371,7 +372,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 10
       },
       "id": 212,
       "options": {
@@ -379,9 +380,10 @@
           "displayMode": "table",
           "placement": "bottom",
           "calcs": [
+            "lastNotNull",
+            "min",
             "mean",
-            "max",
-            "lastNotNull"
+            "max"
           ]
         },
         "tooltip": {
@@ -417,18 +419,18 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 19
       },
       "id": 220,
-      "title": "🔄 Threads & GC",
+      "title": "Threads & GC",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
-      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 0 } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 20 },
       "id": 221,
-      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "mean", "max"] }, "tooltip": { "mode": "multi" } },
       "title": "Threads JVM (live / daemon / peak)",
       "type": "timeseries",
       "targets": [
@@ -439,10 +441,10 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "s", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
-      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 16 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "s", "custom": { "lineWidth": 1, "fillOpacity": 0 } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 20 },
       "id": 222,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "mean", "max"] }, "tooltip": { "mode": "multi" } },
       "title": "GC \u2014 Tempo de Pausa (s/min)",
       "type": "timeseries",
       "targets": [
@@ -451,14 +453,14 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "decmbytes", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
-      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "decmbytes", "custom": { "lineWidth": 1, "fillOpacity": 0 } }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 20 },
       "id": 223,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "mean", "max"] }, "tooltip": { "mode": "multi" } },
       "title": "Taxa de Aloca\u00e7\u00e3o de GC (MB/s)",
       "type": "timeseries",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(rate(jvm_memory_allocated_bytes_total{job=\"spring-petclinic-rest\"}[1m])) / 1024 / 1024", "legendFormat": "Aloca\u00e7\u00e3o (MB/s)", "refId": "A" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "(sum(rate(jvm_memory_allocated_bytes_total{job=\"spring-petclinic-rest\"}[1m])) / 1024 / 1024) or vector(0)", "legendFormat": "Alocação (MB/s)", "refId": "A" }
       ]
     },
     {
@@ -467,10 +469,10 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 29
       },
       "id": 230,
-      "title": "⚙️ CPU",
+      "title": "CPU",
       "type": "row"
     },
     {
@@ -487,8 +489,8 @@
           "max": 1,
           "min": 0,
           "custom": {
-            "lineWidth": 2,
-            "fillOpacity": 15
+            "lineWidth": 1,
+            "fillOpacity": 0
           }
         },
         "overrides": []
@@ -497,7 +499,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 30
       },
       "id": 231,
       "options": {
@@ -534,17 +536,17 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 38 },
       "id": 240,
-      "title": "\ud83d\uddc4\ufe0f Tomcat & Database Connection Pool",
+      "title": "Tomcat & Database Connection Pool",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
-      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 36 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 0 } }, "overrides": [] },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 39 },
       "id": 241,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "mean", "max"] }, "tooltip": { "mode": "multi" } },
       "title": "Threads do Servidor Tomcat",
       "type": "timeseries",
       "targets": [
@@ -555,16 +557,34 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
-      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
-      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 36 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 0 } }, "overrides": [] },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 39 },
       "id": 242,
-      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "mean", "max"] }, "tooltip": { "mode": "multi" } },
       "title": "HikariCP Connection Pool",
       "type": "timeseries",
       "targets": [
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "hikaricp_connections_active{job=\"spring-petclinic-rest\"}", "legendFormat": "active", "refId": "A" },
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "hikaricp_connections_idle{job=\"spring-petclinic-rest\"}", "legendFormat": "idle", "refId": "B" },
         { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "hikaricp_connections_pending{job=\"spring-petclinic-rest\"}", "legendFormat": "pending", "refId": "C" }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "id": 250,
+      "title": "Logs - Garbage Collection",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "Loki" },
+      "gridPos": { "h": 15, "w": 24, "x": 0, "y": 50 },
+      "id": 251,
+      "options": { "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true },
+      "title": "Logs stdout",
+      "type": "logs",
+      "targets": [
+        { "datasource": { "type": "loki", "uid": "Loki" }, "expr": "{container=\"petclinic-api\"} |= \"GC(\"", "refId": "A" }
       ]
     }
   ],
