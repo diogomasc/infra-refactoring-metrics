@@ -121,7 +121,22 @@ A análise comparativa (baseline × pós-refatoração) deve considerar os pain�
 
 ## Exportação de Dados para Documentação Acadêmica
 
-### Via API REST do Grafana
+### Fonte Primária: K6 CSV + JSON
+
+O pipeline principal de dados para análise acadêmica é o **k6 com `--out csv` + `handleSummary()`**. Isso gera:
+
+1. **CSV granular** (`k6-metrics-*.csv`) — cada data point com timestamp e tags
+2. **JSON summary** (`k6-summary-*.json`) — agregados completos (avg, min, med, max, p90, p95, p99)
+
+> **Vantagem:** reprodutibilidade total sem depender de estado transitório do Grafana. O notebook Python consome diretamente esses artefatos.
+
+### Fonte Secundária: Grafana (validação visual)
+
+Para validação visual ou captura de dashboards para o texto do TCC:
+
+**Via Interface:** Painel → ⋮ → Inspect → Data → Download CSV
+
+**Via API REST:**
 
 ```bash
 curl -u admin:admin \
@@ -132,15 +147,12 @@ curl -u admin:admin \
   --data-urlencode 'step=15s'
 ```
 
-### Via Interface
-
-**Painel → ⋮ → Inspect → Data → Download CSV** — exporta os pontos da série temporal para o intervalo selecionado.
-
-> **Recomendação:** exporte os dados como CSV e calcule estatísticas (média, p95, máximo) em planilha ou script Python. Isso garante **reprodutibilidade** dos resultados apresentados no TCC e permite testes estatísticos formais (Mann-Whitney U, Wilcoxon) entre baseline e pós-refatoração.
+> Os dados do Grafana/Prometheus complementam a análise do k6 com métricas de infraestrutura JVM (heap, GC, threads) não capturadas pelo k6.
 
 ---
 
 ## Referências
 
 - Richards, M.; Ford, N. (2020). *Fundamentals of Software Architecture*. O'Reilly.
-- Ford, N.; Parsons, R.; Kua, P. (2017). *Building Evolutionary Architectures*. O'Reilly.
+- Ford, N.; Parsons, R.; Kua, P. (2022). *Building Evolutionary Architectures*, 2nd ed. O'Reilly.
+

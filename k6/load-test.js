@@ -38,9 +38,8 @@
 // Execução (modo primário — --network host, zero NAT overhead):
 //   bash infra/scripts/run-benchmark.sh [baseline|pos-refatoracao]
 //
-// Execução alternativa (via compose):
-//   docker compose -f infra/docker-compose.infra.yml \
-//     --profile testing run --rm k6 run /scripts/load-test.js
+// Execução alternativa (via compose, a partir de infra/):
+//   docker compose --profile testing run --rm k6 run /scripts/load-test.js
 //
 // ⚠️  NÃO altere scenarios, thresholds nem payloads entre as fases
 //     baseline e pós-refatoração — apenas o código Java muda.
@@ -50,6 +49,7 @@ import http from "k6/http";
 import { check, group, sleep } from "k6";
 import { Trend, Rate, Counter } from "k6/metrics";
 import faker from "k6/x/faker";
+import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.2/index.js";
 
 // ── Métricas customizadas (metodologia RED expandida) ───────────────────────
 // Trends com true = habilita percentis (p50, p90, p95, p99) no relatório k6.
@@ -176,24 +176,14 @@ export const options = {
     http_req_duration: ["p(95)<5000"],
     taxa_erro: ["rate<0.10"],
 
-    // Thresholds p95 por endpoint (baseline histórico — não alterar)
-    latencia_listar_owners:   ["p(95)<4000"],
-    latencia_criar_owner:     ["p(95)<3000"],
-    latencia_consultar_owner: ["p(95)<3000"],
-    latencia_criar_pet:       ["p(95)<3000"],
-    latencia_criar_visit:     ["p(95)<3000"],
-    latencia_listar_vets:     ["p(95)<2000"],
-
-    // Thresholds p99 por endpoint → alimentam LatencyFitnessFunction
-    // EXCELLENT ≤ 200ms | GOOD ≤ 300ms | POOR ≤ 500ms | UNACCEPTABLE > 500ms
-    // Os valores abaixo são o threshold de aceitação mínima do TCC (POOR = 500ms).
-    // A classificação exata (EXCELLENT/GOOD/POOR) é feita pelas fitness functions.
-    latencia_listar_owners:   ["p(99)<5000"],
-    latencia_criar_owner:     ["p(99)<4000"],
-    latencia_consultar_owner: ["p(99)<4000"],
-    latencia_criar_pet:       ["p(99)<4000"],
-    latencia_criar_visit:     ["p(99)<4000"],
-    latencia_listar_vets:     ["p(99)<3000"],
+    // Thresholds p95 + p99 por endpoint (ambos na mesma chave — k6 avalia todos)
+    // p95: baseline histórico | p99: alimenta LatencyFitnessFunction
+    latencia_listar_owners:   ["p(95)<4000", "p(99)<5000"],
+    latencia_criar_owner:     ["p(95)<3000", "p(99)<4000"],
+    latencia_consultar_owner: ["p(95)<3000", "p(99)<4000"],
+    latencia_criar_pet:       ["p(95)<3000", "p(99)<4000"],
+    latencia_criar_visit:     ["p(95)<3000", "p(99)<4000"],
+    latencia_listar_vets:     ["p(95)<2000", "p(99)<3000"],
 
     // Taxa de erro por endpoint → alimentam ReliabilityFitnessFunction
     erro_listar_owners:   ["rate<0.10"],
@@ -470,4 +460,27 @@ export default function loadTestScenario(data) {
   });
 
   sleep(__VU > 80 ? 0.1 : 0.3);
+}
+
+// ── Exportação de Resultados ─────────────────────────────────────────────────
+// handleSummary() é chamado pelo k6 ao final do teste com TODOS os dados
+// agregados (métricas, checks, thresholds). Exporta:
+//   1. stdout: resumo textual formatado (o relatório padrão do k6)
+//   2. summary.json: dados completos em JSON para análise Python/Pandas
+//
+// O JSON contém por métrica: count, rate, avg, min, med, max, p(90), p(95), p(99)
+// e valores de thresholds (pass/fail). Isso permite ao notebook Python calcular
+// médias, desvios padrão e testes de hipótese SEM depender do Grafana.
+//
+// Uso combinado com --out csv: o --out csv gera dados granulares por data point
+// (timestamp, metric_name, value, tags) para séries temporais. O handleSummary
+// gera o resumo agregado. Juntos, cobrem 100% das necessidades de análise.
+//
+// Referência: https://grafana.com/docs/k6/latest/results-output/end-of-test/custom-summary/
+// ─────────────────────────────────────────────────────────────────────────────
+export function handleSummary(data) {
+  return {
+    stdout: textSummary(data, { indent: " ", enableColors: true }),
+    "/results/summary.json": JSON.stringify(data, null, 2),
+  };
 }

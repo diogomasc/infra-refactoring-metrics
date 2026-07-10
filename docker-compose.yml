@@ -1,14 +1,14 @@
 # --- Stack de observabilidade do TCC ---
-# Componentes: Prometheus, Grafana e K6
+# Componentes: Prometheus, Grafana, Loki, Promtail e K6
 #
-# Execute a partir da raiz do projeto:
-#   docker compose -f docker-compose.infra.yml up -d
+# Execute a partir do diretório infra/:
+#   docker compose up -d
 #
 # Para derrubar:
-#   docker compose -f docker-compose.infra.yml down -v
+#   docker compose down -v
 #
 # Para rodar os testes de carga (K6):
-#   docker compose -f docker-compose.infra.yml --profile testing run --rm k6 run /scripts/load-test.js
+#   docker compose --profile testing run --rm k6 run /scripts/load-test.js
 
 services:
   # ── Prometheus ─────────────────────────────────────────────────────────────
