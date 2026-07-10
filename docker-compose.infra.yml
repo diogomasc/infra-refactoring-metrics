@@ -62,12 +62,51 @@ services:
     depends_on:
       prometheus:
         condition: service_started
+      loki:
+        condition: service_started
     deploy:
       resources:
         limits:
           memory: 256M
         reservations:
           memory: 64M
+
+  # ── Loki (Agregação de Logs) ───────────────────────────────────────────────
+  loki:
+    image: grafana/loki:latest
+    container_name: tcc-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - tcc-infra
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ── Promtail (Coletor de Logs do Docker) ───────────────────────────────────
+  promtail:
+    image: grafana/promtail:latest
+    container_name: tcc-promtail
+    restart: unless-stopped
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yaml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - tcc-infra
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
   # ── K6 (testes de carga — sob demanda) ─────────────────────────────────────
   # Só sobe quando o profile testing é habilitado (não inicia com up -d).
@@ -86,6 +125,7 @@ services:
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:
 
 # ── Redes ────────────────────────────────────────────────────────────────────
 networks:
