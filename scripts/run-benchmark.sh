@@ -1,173 +1,223 @@
 #!/bin/bash
-# ── run-benchmark.sh ──────────────────────────────────────────────────────────
-# Executa N rodadas consecutivas de benchmark isolado para o TCC.
+# ==============================================================================
+# SCRIPT: run-benchmark.sh
+# DESCRIÇÃO: Orquestra a execução de testes de carga (benchmarks) isolados para
+#            coleta de métricas do TCC.
 #
-# Cada rodada:
-#   1. Limpa TUDO: Spring Boot, containers Docker (K6, infra), volumes, portas
-#   2. Sobe stack de observabilidade (Prometheus + Grafana + Loki)
-#   3. Sobe Spring Boot com warm-up JVM configurável
-#   4. Roda K6 e salva CSV + JSON com sufixo _run_N
-#   5. Aguarda último scrape antes de encerrar
+# FLUXO DE CADA RODADA (RUN):
+#   1. Nuke   : Destrói processos residuais (Spring, Docker, portas ocupadas).
+#   2. Infra  : Sobe a stack de observabilidade (Prometheus + Grafana + Loki).
+#   3. App    : Inicia a API Spring Boot e aguarda o warm-up da JVM.
+#   4. Teste  : Executa o script do K6 e exporta os resultados (CSV/JSON).
+#   5. Coleta : Aguarda o último ciclo de scraping (Prometheus) antes de encerrar.
 #
-# Uso:
-#   bash infra/scripts/run-benchmark.sh [label] [n_runs]
-#   bash infra/scripts/run-benchmark.sh baseline 5
-#   bash infra/scripts/run-benchmark.sh pos-refatoracao 5
+# USO:
+#   bash run-benchmark.sh [label_da_fase] [numero_de_rodadas]
 #
-# Pré-requisitos: docker, docker compose v2, java 17+, curl, mvnw
-# ─────────────────────────────────────────────────────────────────────────────
+# EXEMPLOS:
+#   bash run-benchmark.sh baseline 5
+#   bash run-benchmark.sh original-fork 3
+#
+# PRÉ-REQUISITOS: docker, docker compose (v2), java (17+), curl, mvnw, fuser
+# ==============================================================================
+
+# Ativa o modo de segurança do Bash:
+# -e: Sai imediatamente se um comando falhar.
+# -u: Trata variáveis não definidas como erro.
+# -o pipefail: O status de um pipeline é o do último comando que falhar.
 set -euo pipefail
 
-# ── Parâmetros ────────────────────────────────────────────────────────────────
-LABEL="${1:-baseline}"
-N_RUNS="${2:-5}"
+# ── 1. Parâmetros e Variáveis de Sessão ───────────────────────────────────────
 
-# ── Caminhos ──────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-INFRA_DIR="$PROJECT_ROOT/infra"
-APP_DIR="$PROJECT_ROOT/api"
-INFRA_COMPOSE="$INFRA_DIR/docker-compose.yml"
-K6_SCRIPT="$INFRA_DIR/k6/load-test.js"
-LOG_DIR="$INFRA_DIR/results"
-SESSION_TS="$(date +%Y%m%d-%H%M%S)"   # timestamp da sessão (igual para todas as runs)
+readonly LABEL="${1:-baseline}"
+readonly N_RUNS="${2:-5}"
+readonly SESSION_TS="$(date +%Y%m%d-%H%M%S)" # Timestamp único para todo o lote
 
-# ── Configurações de tempo (ajuste conforme o hardware) ───────────────────────
-WARMUP_EXTRA_SECS=15     # aguarda após /actuator/health estar OK (JIT + pool)
-PROMETHEUS_SCRAPE_WAIT=20 # aguarda ultimo scrape antes de derrubar stack
-SPRING_TIMEOUT=120        # timeout para Spring Boot subir
-PROM_TIMEOUT=30           # timeout para Prometheus ficar healthy
-COOLDOWN_BETWEEN_RUNS=10  # pausa entre rodadas para evitar estado residual
+# ── 2. Caminhos de Diretórios e Arquivos ──────────────────────────────────────
 
-# ── Variáveis de estado ───────────────────────────────────────────────────────
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+readonly INFRA_DIR="$PROJECT_ROOT/infra"
+readonly APP_DIR="$PROJECT_ROOT/api"
+readonly LOG_DIR="$INFRA_DIR/results"
+
+readonly INFRA_COMPOSE="$INFRA_DIR/docker-compose.yml"
+readonly K6_SCRIPT="$INFRA_DIR/k6/load-test.js"
+
+# ── 3. Configurações de Tempo e Timeout (em segundos) ─────────────────────────
+
+readonly PROM_TIMEOUT=30           # Limite de espera para o Prometheus ficar online
+readonly SPRING_TIMEOUT=120        # Limite de espera para o Spring Boot iniciar
+readonly WARMUP_EXTRA_SECS=15      # Tempo extra pós-inicialização para a JIT compilar hot-paths
+readonly PROMETHEUS_SCRAPE_WAIT=20 # Tempo para garantir que as últimas métricas sejam coletadas
+readonly COOLDOWN_BETWEEN_RUNS=10  # Pausa entre rodadas para dissipação térmica/recursos
+
+# ── 4. Variáveis de Estado (Mutáveis) ─────────────────────────────────────────
+
 SPRING_PID=""
-CURRENT_RUN=0
 
-# ── Validação de pré-requisitos ───────────────────────────────────────────────
-for cmd in docker java curl; do
+# ── 5. Validação de Pré-requisitos ────────────────────────────────────────────
+
+for cmd in docker java curl fuser; do
   if ! command -v "$cmd" &>/dev/null; then
-    echo "ERRO: '$cmd' não encontrado no PATH." >&2
+    echo "ERRO: Dependência '$cmd' não encontrada no PATH." >&2
     exit 1
   fi
 done
 
 if ! docker compose version &>/dev/null; then
-  echo "ERRO: 'docker compose' (v2) não disponível." >&2
+  echo "ERRO: O 'docker compose' (v2) não está disponível." >&2
   exit 1
 fi
 
-[[ ! -f "$INFRA_COMPOSE" ]] && { echo "ERRO: compose não encontrado: $INFRA_COMPOSE" >&2; exit 1; }
-[[ ! -f "$K6_SCRIPT"     ]] && { echo "ERRO: K6 script não encontrado: $K6_SCRIPT"  >&2; exit 1; }
+[[ ! -f "$INFRA_COMPOSE" ]] && { echo "ERRO: Arquivo docker-compose não encontrado: $INFRA_COMPOSE" >&2; exit 1; }
+[[ ! -f "$K6_SCRIPT"     ]] && { echo "ERRO: Script do K6 não encontrado: $K6_SCRIPT" >&2; exit 1; }
 
 mkdir -p "$LOG_DIR"
 
-# ── Funções utilitárias ───────────────────────────────────────────────────────
-log() { echo "[$(date +%T)] $*"; }
+# ==============================================================================
+# FUNÇÕES UTILITÁRIAS
+# ==============================================================================
 
+log() {
+  echo "[$(date +%T)] $*"
+}
+
+# Aguarda um endpoint HTTP retornar status de sucesso (2xx)
+wait_for_url() {
+  local url="$1" timeout="$2" label="$3"
+  echo -n "[$(date +%T)]   Aguardando $label"
+
+  for i in $(seq 1 "$timeout"); do
+    if curl -sf "$url" >/dev/null 2>&1; then
+      echo " OK (${i}s)"
+      return 0
+    fi
+    sleep 1
+    echo -n "."
+  done
+
+  echo " FALHA (timeout ${timeout}s)"
+  return 1
+}
+
+# ==============================================================================
+# FUNÇÕES DE INFRAESTRUTURA E LIFECYCLE
+# ==============================================================================
+
+# Encerra o processo do Spring Boot graciosamente
 cleanup_spring() {
   if [[ -n "$SPRING_PID" ]] && kill -0 "$SPRING_PID" 2>/dev/null; then
-    log "  Parando Spring Boot (PID: $SPRING_PID)..."
+    log "  Encerrando Spring Boot (PID: $SPRING_PID)..."
     kill "$SPRING_PID" 2>/dev/null || true
     wait "$SPRING_PID" 2>/dev/null || true
     SPRING_PID=""
   fi
 }
 
-# Limpa TUDO: Spring Boot, Docker containers (k6, infra), volumes, portas
+# Restaura o ambiente para um estado limpo, matando processos e liberando portas
 nuke_environment() {
-  log "  Parando Spring Boot (se ativo)..."
+  log "  Verificando processos ativos do Spring Boot..."
   cleanup_spring
 
-  log "  Derrubando stack Docker + volumes..."
+  log "  Desmontando stack Docker e limpando volumes associados..."
   docker compose -f "$INFRA_COMPOSE" down -v --remove-orphans 2>/dev/null || true
 
-  # Mata containers K6 órfãos (de runs anteriores que podem ter ficado pendurados)
+  # Remove containers K6 que possam ter travado em execuções anteriores
   local k6_orphans
   k6_orphans=$(docker ps -q --filter "ancestor=grafana/k6:latest" 2>/dev/null || true)
   if [[ -n "$k6_orphans" ]]; then
-    log "  Matando containers K6 órfãos: $k6_orphans"
+    log "  Limpando containers K6 órfãos: $k6_orphans"
     docker rm -f $k6_orphans 2>/dev/null || true
   fi
 
-  # Garante porta 9966 livre (Spring Boot anterior ou outro processo)
+  # Garante que a porta da API está livre para a próxima rodada
   if ss -tlnp 2>/dev/null | grep -q ':9966 '; then
-    log "  AVISO: Porta 9966 ocupada — liberando..."
+    log "  AVISO: Porta 9966 em uso. Forçando liberação..."
     fuser -k 9966/tcp 2>/dev/null || true
     sleep 2
   fi
 
-  # Garante porta 9090 livre (Prometheus anterior)
+  # Garante que a porta do Prometheus está livre
   if ss -tlnp 2>/dev/null | grep -q ':9090 '; then
-    log "  AVISO: Porta 9090 ocupada — liberando..."
+    log "  AVISO: Porta 9090 em uso. Forçando liberação..."
     fuser -k 9090/tcp 2>/dev/null || true
     sleep 1
   fi
 
-  log "  Ambiente limpo."
+  log "  Ambiente higienizado com sucesso."
 }
 
+# Trap executado no encerramento do script (sucesso ou falha)
 cleanup_all() {
   local exit_code=$?
   echo ""
-  log "Executando cleanup final..."
+  log "Executando limpeza final de segurança..."
   cleanup_spring
   docker compose -f "$INFRA_COMPOSE" down -v --remove-orphans 2>/dev/null || true
-  # Remove containers K6 pendurados
   docker rm -f $(docker ps -q --filter "ancestor=grafana/k6:latest" 2>/dev/null) 2>/dev/null || true
-  log "Cleanup concluído (exit=$exit_code)."
+  log "Script finalizado com código de saída: $exit_code"
   exit "$exit_code"
 }
 trap cleanup_all EXIT
 
-wait_for_url() {
-  local url="$1" timeout="$2" label="$3"
-  echo -n "[$(date +%T)]   Aguardando $label"
-  for i in $(seq 1 "$timeout"); do
-    if curl -sf "$url" >/dev/null 2>&1; then
-      echo " OK (${i}s)"; return 0
-    fi
-    sleep 1; echo -n "."
-  done
-  echo " FALHA (timeout ${timeout}s)"; return 1
-}
+# ==============================================================================
+# ORQUESTRAÇÃO DOS SERVIÇOS
+# ==============================================================================
 
 start_observability_stack() {
-  log "Subindo Prometheus + Grafana..."
+  log "Iniciando infraestrutura de observabilidade (Prometheus + Grafana)..."
   docker compose -f "$INFRA_COMPOSE" up -d
   wait_for_url "http://localhost:9090/-/healthy" "$PROM_TIMEOUT" "Prometheus" \
-    || { log "ERRO: Prometheus não respondeu."; exit 1; }
+    || { log "ERRO: Prometheus não respondeu a tempo."; exit 1; }
 }
 
 start_spring() {
   local run_log="$1"
-  log "Iniciando Spring Boot (profile: h2,spring-data-jpa)..."
+  log "Iniciando API Spring Boot (Profile: h2, spring-data-jpa)..."
+
   cd "$APP_DIR"
+
+  # Força a configuração via variáveis de ambiente para garantir consistência
+  # independente das configurações salvas no código-fonte atual (application.properties).
+  export SERVER_PORT=9966
+  export SERVER_SERVLET_CONTEXT_PATH=/petclinic/
+
   ./mvnw spring-boot:run \
     -Dspring-boot.run.profiles=h2,spring-data-jpa \
     -Dspring-boot.run.jvmArguments="-Xms512m -Xmx1g -XX:+UseG1GC -XX:MaxGCPauseMillis=200" \
     > "$run_log" 2>&1 &
+
   SPRING_PID=$!
   cd "$PROJECT_ROOT"
 
-  # Aguarda /actuator/health
-  echo -n "[$(date +%T)]   Aguardando Spring Boot (PID: $SPRING_PID)"
+  # Polling do endpoint de health check do Spring
+  echo -n "[$(date +%T)]   Aguardando inicialização da API (PID: $SPRING_PID)"
   for i in $(seq 1 "$SPRING_TIMEOUT"); do
     if curl -sf http://localhost:9966/petclinic/actuator/health >/dev/null 2>&1; then
-      echo " OK (${i}s)"; break
+      echo " OK (${i}s)"
+      break
     fi
+
+    # Se o processo morrer antes do timeout, interrompe imediatamente
     if ! kill -0 "$SPRING_PID" 2>/dev/null; then
-      echo " FALHA (processo morreu)"
-      log "ERRO: Spring Boot terminou. Log: $run_log"; exit 1
+      echo " FALHA (Processo interrompido de forma inesperada)"
+      log "ERRO: O processo Spring Boot morreu durante a inicialização. Verifique os logs: $run_log"
+      exit 1
     fi
+
     if [[ $i -eq "$SPRING_TIMEOUT" ]]; then
-      echo " FALHA (timeout ${SPRING_TIMEOUT}s)"
-      log "ERRO: Spring Boot não respondeu. Log: $run_log"; exit 1
+      echo " FALHA (Timeout atingido: ${SPRING_TIMEOUT}s)"
+      log "ERRO: Spring Boot não ficou 'healthy' a tempo. Verifique os logs: $run_log"
+      exit 1
     fi
-    sleep 1; echo -n "."
+
+    sleep 1
+    echo -n "."
   done
 
-  # Warm-up extra: aguarda JIT compilar os hot paths
-  log "  Warm-up JVM: aguardando ${WARMUP_EXTRA_SECS}s adicionais (JIT + pool de conexões)..."
+  # Aguarda a JIT compilar as rotas mais usadas e estabilizar o pool de conexões
+  log "  Iniciando Warm-up da JVM: Aguardando ${WARMUP_EXTRA_SECS}s adicionais..."
   sleep "$WARMUP_EXTRA_SECS"
 }
 
@@ -177,16 +227,13 @@ run_k6() {
   local summary_file="$LOG_DIR/k6-summary-${LABEL}_run_${run_num}-${SESSION_TS}.json"
   local run_log="$LOG_DIR/benchmark-${LABEL}_run_${run_num}-${SESSION_TS}.log"
 
-  log "  CSV     : $(basename "$csv_file")"
-  log "  Summary : $(basename "$summary_file")"
-  log "  ⏱  O teste de carga leva ~15min. Progresso abaixo:"
+  log "  Exportando CSV     : $(basename "$csv_file")"
+  log "  Exportando Summary : $(basename "$summary_file")"
+  log "  ⏱ O teste de carga está em execução. Acompanhe o progresso abaixo:"
 
-  # 'script -qfc' preserva o pseudo-TTY para o K6 mostrar a barra de
-  # progresso em tempo real (cores, percentuais, ETA), enquanto captura
-  # toda a saída no log file. Sem TTY, o K6 suprime o output interativo.
-  #   -q  = silencia mensagens "Script started/done"
-  #   -f  = flush a cada write (output em tempo real)
-  #   -c  = executa o comando fornecido
+  # O uso do 'script -qfc' engana o K6 fazendo-o achar que está rodando em um TTY interativo.
+  # Isso permite que a barra de progresso visual seja exibida no terminal, enquanto
+  # garante que o log real seja salvo no arquivo "$run_log".
   script -qfc "docker run --rm --network host \
     --user $(id -u):$(id -g) \
     -e HOME=/tmp \
@@ -199,83 +246,87 @@ run_k6() {
 
   local k6_exit=$?
 
-  # handleSummary() grava /results/summary.json — renomear para sufixo dinâmico
+  # O K6 salva o resultado padrão como summary.json. Precisamos renomeá-lo
+  # para incluir o label e o run_number atual e evitar sobrescritas.
   if [[ -f "$LOG_DIR/summary.json" ]]; then
     mv "$LOG_DIR/summary.json" "$summary_file"
-    log "  ✅ Summary JSON salvo: $(basename "$summary_file")"
+    log "  ✅ Relatório Summary JSON salvo com sucesso: $(basename "$summary_file")"
   else
-    log "  ⚠  summary.json não encontrado (K6 pode ter falhado antes do handleSummary)"
+    log "  ⚠ AVISO: summary.json não encontrado. O K6 pode ter abortado precocemente."
   fi
 
-  log "  K6 exit code: ${k6_exit} (0=OK | 99=thresholds violados)"
+  log "  K6 finalizado com código: ${k6_exit} (0 = Sucesso | 99 = Thresholds violados)"
   echo "$k6_exit"
 }
 
-# ── Banner ────────────────────────────────────────────────────────────────────
+# ==============================================================================
+# EXECUÇÃO PRINCIPAL
+# ==============================================================================
+
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
 printf  "║  TCC Benchmark Runner  %-40s║\n" ""
-printf  "║  Fase    : %-51s║\n" "$LABEL"
-printf  "║  Runs    : %-51s║\n" "$N_RUNS"
-printf  "║  Sessão  : %-51s║\n" "$SESSION_TS"
+printf  "║  Fase Analisada : %-43s║\n" "$LABEL"
+printf  "║  Total de Runs  : %-43s║\n" "$N_RUNS"
+printf  "║  ID da Sessão   : %-43s║\n" "$SESSION_TS"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 
-# ── Loop de N rodadas ─────────────────────────────────────────────────────────
 K6_EXIT_LAST=0
 
 for RUN in $(seq 1 "$N_RUNS"); do
-  CURRENT_RUN=$RUN
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  log "RODADA ${RUN}/${N_RUNS} — fase: ${LABEL}"
+  log "RODADA ${RUN}/${N_RUNS} — Fase: ${LABEL}"
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
   RUN_LOG="$LOG_DIR/benchmark-${LABEL}_run_${RUN}-${SESSION_TS}.log"
 
-  # 1. NUKE: limpa TUDO — Spring, Docker, volumes, portas
-  log "[step 1/4] Clean state (nuke completo)..."
+  log "[1/4] Preparando ambiente isolado (Nuke)..."
   nuke_environment
 
-  # 2. Sobe observabilidade
-  log "[step 2/4] Stack de observabilidade..."
+  log "[2/4] Configurando stack de observabilidade..."
   start_observability_stack
 
-  # 3. Sobe Spring Boot com warm-up
-  log "[step 3/4] Spring Boot + warm-up JVM..."
+  log "[3/4] Inicializando aplicação alvo (Spring Boot)..."
   start_spring "$RUN_LOG"
 
-  # 4. Executa K6
-  log "[step 4/4] Executando K6..."
+  log "[4/4] Disparando teste de carga (K6)..."
   K6_EXIT_LAST=$(run_k6 "$RUN")
 
-  # Aguarda último scrape do Prometheus antes de derrubar
-  log "  Aguardando último scrape Prometheus (${PROMETHEUS_SCRAPE_WAIT}s)..."
+  # É essencial aguardar o último ciclo para não perder métricas do fim do teste
+  log "  Aguardando o último ciclo de coleta do Prometheus (${PROMETHEUS_SCRAPE_WAIT}s)..."
   sleep "$PROMETHEUS_SCRAPE_WAIT"
 
-  # Para Spring (banco H2 zerado no próximo restart)
+  # Derruba o Spring prematuramente para garantir que o banco H2 (em memória) seja resetado
   cleanup_spring
 
   if [[ $RUN -lt $N_RUNS ]]; then
-    log "  Cooldown entre rodadas (${COOLDOWN_BETWEEN_RUNS}s)..."
+    log "  Resfriamento do ambiente para a próxima rodada (${COOLDOWN_BETWEEN_RUNS}s)..."
     sleep "$COOLDOWN_BETWEEN_RUNS"
   fi
 done
 
-# ── Relatório final ───────────────────────────────────────────────────────────
+# ==============================================================================
+# RELATÓRIO FINAL E PRÓXIMOS PASSOS
+# ==============================================================================
+
 echo ""
 echo "═══════════════════════════════════════════════════════════════════"
-echo "  Sessão '${LABEL}' concluída — ${N_RUNS} rodada(s)."
-echo "  Último K6 exit: ${K6_EXIT_LAST} (0=OK | 99=thresholds violados)"
+echo "  Sessão '${LABEL}' concluída com sucesso (${N_RUNS} rodada(s) executada(s))."
+echo "  Código de saída da última execução do K6: ${K6_EXIT_LAST}"
 echo ""
-echo "  Artefatos em: ${LOG_DIR}/"
+echo "  Artefatos gerados em: ${LOG_DIR}/"
 echo ""
+
+# Lista os arquivos gerados formatados para fácil visualização
 ls -1 "$LOG_DIR"/k6-summary-${LABEL}_run_*-${SESSION_TS}.json 2>/dev/null \
-  | while read -r f; do echo "    JSON: $(basename "$f")"; done
+  | while read -r f; do echo "    [JSON] $(basename "$f")"; done
 ls -1 "$LOG_DIR"/k6-metrics-${LABEL}_run_*-${SESSION_TS}.csv 2>/dev/null \
-  | while read -r f; do echo "    CSV : $(basename "$f")"; done
+  | while read -r f; do echo "    [CSV]  $(basename "$f")"; done
+
 echo ""
-echo "  Próximo passo:"
+echo "  Próximo passo sugerido para análise:"
 echo "    uv run --with pandas --with scipy python3 \\"
 echo "      infra/scripts/post-process.py ${LABEL} ${SESSION_TS}"
 echo "═══════════════════════════════════════════════════════════════════"
