@@ -1,12 +1,14 @@
-# ── Configuração do Prometheus ─────────────────────────────────────
+# ── Configuração do Prometheus ─────────────────────────────────
 # Coleta métricas do Spring Boot expostas via Micrometer.
 #
 # Pré-requisitos no application.properties:
 #   management.endpoints.web.exposure.include=health,prometheus,metrics
 #   management.endpoint.prometheus.enabled=true
 #
-# A API é acessada pelo nome de serviço 'petclinic-api' na rede Docker
-# compartilhada tcc-api-net.
+# IMPORTANTE: quando o Spring Boot roda diretamente no HOST (via mvnw),
+# o Prometheus (que está dentro do Docker) precisa usar 'host.docker.internal'
+# para alcançar a porta 9966 do host.
+# Quando a API roda como container Docker na rede tcc-api-net, use 'petclinic-api:9966'.
 
 global:
   scrape_interval: 15s
@@ -15,11 +17,12 @@ global:
 scrape_configs:
   # API principal do TCC.
   # O endpoint /petclinic/actuator/prometheus expõe métricas da aplicação.
+  # Usa host.docker.internal para alcançar o Spring Boot rodando no host.
   - job_name: "spring-petclinic-rest"
     metrics_path: "/petclinic/actuator/prometheus"
     scrape_interval: 5s
     static_configs:
-      - targets: ["petclinic-api:9966"]
+      - targets: ["host.docker.internal:9966"]
         labels:
           app: "spring-petclinic-rest"
           fase: "baseline" # Trocar para "pos-refatoracao" na fase comparativa
