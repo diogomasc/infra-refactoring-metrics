@@ -54,29 +54,29 @@ import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.2/index.js";
 // ── Métricas customizadas (metodologia RED expandida) ───────────────────────
 // Trends com true = habilita percentis (p50, p90, p95, p99) no relatório k6.
 // p99 alimenta LatencyFitnessFunction; p95 mantido para comparação histórica.
-const latenciaListarOwners    = new Trend("latencia_listar_owners", true);
-const latenciaCriarOwner      = new Trend("latencia_criar_owner", true);
-const latenciaConsultarOwner  = new Trend("latencia_consultar_owner", true);
-const latenciaCriarPet        = new Trend("latencia_criar_pet", true);
-const latenciaCriarVisit      = new Trend("latencia_criar_visit", true);
-const latenciaListarVets      = new Trend("latencia_listar_vets", true);
-const latenciaHealth          = new Trend("latencia_health", true);
+const latenciaListarOwners = new Trend("latencia_listar_owners", true);
+const latenciaCriarOwner = new Trend("latencia_criar_owner", true);
+const latenciaConsultarOwner = new Trend("latencia_consultar_owner", true);
+const latenciaCriarPet = new Trend("latencia_criar_pet", true);
+const latenciaCriarVisit = new Trend("latencia_criar_visit", true);
+const latenciaListarVets = new Trend("latencia_listar_vets", true);
+const latenciaHealth = new Trend("latencia_health", true);
 
 // Taxa de erro GLOBAL (usado por ReliabilityFitnessFunction com errorRatePercent)
 const taxaErroGlobal = new Rate("taxa_erro");
 
 // Taxa de erro POR ENDPOINT — permite isolar qual endpoint degrada primeiro
-const erroListarOwners   = new Rate("erro_listar_owners");
-const erroCriarOwner     = new Rate("erro_criar_owner");
+const erroListarOwners = new Rate("erro_listar_owners");
+const erroCriarOwner = new Rate("erro_criar_owner");
 const erroConsultarOwner = new Rate("erro_consultar_owner");
-const erroCriarPet       = new Rate("erro_criar_pet");
-const erroCriarVisit     = new Rate("erro_criar_visit");
-const erroListarVets     = new Rate("erro_listar_vets");
+const erroCriarPet = new Rate("erro_criar_pet");
+const erroCriarVisit = new Rate("erro_criar_visit");
+const erroListarVets = new Rate("erro_listar_vets");
 
 // Counters de escritas bem-sucedidas (throughput útil)
-const ownersCriados  = new Counter("owners_criados_com_sucesso");
-const petsCriados    = new Counter("pets_criados_com_sucesso");
-const visitsCriadas  = new Counter("visits_criadas_com_sucesso");
+const ownersCriados = new Counter("owners_criados_com_sucesso");
+const petsCriados = new Counter("pets_criados_com_sucesso");
+const visitsCriadas = new Counter("visits_criadas_com_sucesso");
 
 // ── Configuração ─────────────────────────────────────────────────────────────
 // __ENV permite override via: docker run -e BASE_URL=... ou k6 run -e BASE_URL=...
@@ -142,8 +142,7 @@ const PET_TYPES = [
 // dados de stages específicos do relatório).
 export const options = {
   scenarios: {
-    // ── Warm-up: JIT compilation + connection pool init ──────────────────
-    // Dados gerados aqui NÃO entram nos thresholds (tag: phase=warmup).
+    // Warm-up: mantém ramping-vus (correto para aquecimento JIT)
     warmup: {
       executor: "ramping-vus",
       startVUs: 0,
@@ -151,24 +150,22 @@ export const options = {
       gracefulRampDown: "5s",
       tags: { phase: "warmup" },
     },
-    // ── Teste principal: métricas válidas para comparação ────────────────
-    // startTime: '30s' garante que inicia após o warmup.
-    // Dados gerados aqui são os únicos avaliados pelos thresholds.
+
+    // ── Teste principal: open-loop com taxa constante ─────────────────
+    // rate: iterações por segundo fixas; maxVUs: teto de VUs alocáveis.
+    // K6 cria novos VUs conforme necessário para honrar a taxa — se a
+    // aplicação travar, VUs se acumulam mas a taxa de chegada permanece
+    // constante, preservando a premissa de "carga de trabalho constante".
     steady_state: {
-      executor: "ramping-vus",
-      startVUs: 30,
-      startTime: "30s",
-      stages: [
-        { duration: "1m", target: 30 }, // warm-up: JVM aquece, JIT compila hot-paths
-        { duration: "3m", target: 50 }, // carga nominal sustentada — baseline principal
-        { duration: "1m", target: 100 }, // spike: transição gradual ao pico
-        { duration: "7m", target: 100 }, // estresse sustentado — zona de detecção N+1
-        // e saturação do pool de conexões do H2
-        { duration: "1m", target: 0 }, // ramp-down limpo
-        { duration: "2m", target: 0 }, // cooldown: mede recuperação JVM/pool pós-pico
-      ],
-      gracefulRampDown: "10s",
+      executor: "constant-arrival-rate",
+      startTime: "30s", // inicia após o warmup
+      rate: 50, // 50 iterações/s (ajuste conforme baseline)
+      timeUnit: "1s",
+      duration: "12m", // equivale ao steady_state anterior
+      preAllocatedVUs: 50, // pool inicial (evita overhead de alocação)
+      maxVUs: 150, // teto: permite absorver degradação sem travar
       tags: { phase: "test" },
+      gracefulStop: "10s",
     },
   },
   thresholds: {
@@ -178,20 +175,20 @@ export const options = {
 
     // Thresholds p95 + p99 por endpoint (ambos na mesma chave — k6 avalia todos)
     // p95: baseline histórico | p99: alimenta LatencyFitnessFunction
-    latencia_listar_owners:   ["p(95)<4000", "p(99)<5000"],
-    latencia_criar_owner:     ["p(95)<3000", "p(99)<4000"],
+    latencia_listar_owners: ["p(95)<4000", "p(99)<5000"],
+    latencia_criar_owner: ["p(95)<3000", "p(99)<4000"],
     latencia_consultar_owner: ["p(95)<3000", "p(99)<4000"],
-    latencia_criar_pet:       ["p(95)<3000", "p(99)<4000"],
-    latencia_criar_visit:     ["p(95)<3000", "p(99)<4000"],
-    latencia_listar_vets:     ["p(95)<2000", "p(99)<3000"],
+    latencia_criar_pet: ["p(95)<3000", "p(99)<4000"],
+    latencia_criar_visit: ["p(95)<3000", "p(99)<4000"],
+    latencia_listar_vets: ["p(95)<2000", "p(99)<3000"],
 
     // Taxa de erro por endpoint → alimentam ReliabilityFitnessFunction
-    erro_listar_owners:   ["rate<0.10"],
-    erro_criar_owner:     ["rate<0.10"],
+    erro_listar_owners: ["rate<0.10"],
+    erro_criar_owner: ["rate<0.10"],
     erro_consultar_owner: ["rate<0.10"],
-    erro_criar_pet:       ["rate<0.10"],
-    erro_criar_visit:     ["rate<0.10"],
-    erro_listar_vets:     ["rate<0.10"],
+    erro_criar_pet: ["rate<0.10"],
+    erro_criar_visit: ["rate<0.10"],
+    erro_listar_vets: ["rate<0.10"],
   },
 };
 
